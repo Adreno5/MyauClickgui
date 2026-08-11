@@ -22,6 +22,9 @@ class GuiClickGui : GuiScreen() {
     }
 
     override fun drawScreen(mouseX: Int, mouseY: Int, partialTicks: Float) {
-        super.drawScreen(mouseX, mouseY, partialTicks)
+    }
+
+    override fun doesGuiPauseGame(): Boolean {
+        return false
     }
 }

@@ -3,9 +3,12 @@ package adreno.myauclickgui.feature.utils
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.client.renderer.GlStateManager
+import net.minecraft.client.shader.Framebuffer
 import net.minecraft.util.ResourceLocation
 import org.lwjgl.BufferUtils
+import org.lwjgl.opengl.ARBShaderObjects
 import org.lwjgl.opengl.GL11
+import org.lwjgl.opengl.GL20
 import org.lwjgl.opengl.GL30
 import java.nio.IntBuffer
 import java.util.*
@@ -17,6 +20,34 @@ object RenderUtil {
     private var stencilFbo = -1
     private var stencilWidth = -1
     private var stencilHeight = -1
+    private var blurFbo: Framebuffer? = null
+    private var blurFbo2: Framebuffer? = null
+    private var blurProgram = -1
+    private var blurTexelSizeLoc = -1
+    private var blurDirectionLoc = -1
+    private var blurRadiusLoc = -1
+
+    private val BLUR_SHADER = """
+uniform sampler2D texture;
+uniform vec2 texelSize;
+uniform vec2 direction;
+uniform float radius;
+
+void main() {
+    vec2 uv = gl_FragCoord.xy * texelSize;
+    vec4 sum = texture2D(texture, uv) * 0.2270270270;
+    vec2 offset = texelSize * radius * 0.5 * direction;
+    sum += texture2D(texture, uv + offset) * 0.1945945946;
+    sum += texture2D(texture, uv - offset) * 0.1945945946;
+    sum += texture2D(texture, uv + offset * 2.0) * 0.1216216216;
+    sum += texture2D(texture, uv - offset * 2.0) * 0.1216216216;
+    sum += texture2D(texture, uv + offset * 3.0) * 0.0540540541;
+    sum += texture2D(texture, uv - offset * 3.0) * 0.0540540541;
+    sum += texture2D(texture, uv + offset * 4.0) * 0.0162162162;
+    sum += texture2D(texture, uv - offset * 4.0) * 0.0162162162;
+    gl_FragColor = sum;
+}
+""".trimIndent()
 
     @JvmStatic
     fun drawRect(x: Float, y: Float, w: Float, h: Float, color: Int) {
@@ -280,6 +311,132 @@ object RenderUtil {
         if (scissorStack.isEmpty()) {
             GL11.glDisable(GL11.GL_SCISSOR_TEST)
         }
+    }
+    @JvmStatic
+    fun renderBlur(clip: Runnable, radius: Int) {
+        if (radius <= 0) return
+        val main = mc.framebuffer
+        val width = main.framebufferWidth
+        val height = main.framebufferHeight
+        if (width <= 0 || height <= 0) return
+        if (!ensureBlurFbos(width, height) || !ensureBlurShader()) return
+
+        val sr = ScaledResolution(mc)
+        val screenW = sr.scaledWidth.toFloat()
+        val screenH = sr.scaledHeight.toFloat()
+        val fbo1 = blurFbo!!
+        val fbo2 = blurFbo2!!
+
+        val blend = GL11.glIsEnabled(GL11.GL_BLEND)
+        val depth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST)
+        val texture = GL11.glIsEnabled(GL11.GL_TEXTURE_2D)
+        val lighting = GL11.glIsEnabled(GL11.GL_LIGHTING)
+
+        GlStateManager.pushMatrix()
+        GlStateManager.loadIdentity()
+        GlStateManager.enableTexture2D()
+        GlStateManager.disableBlend()
+        GlStateManager.disableDepth()
+        GlStateManager.disableLighting()
+        GlStateManager.colorMask(true, true, true, true)
+        GlStateManager.color(1f, 1f, 1f, 1f)
+        GlStateManager.viewport(0, 0, width, height)
+
+        ARBShaderObjects.glUseProgramObjectARB(blurProgram)
+        ARBShaderObjects.glUniform2fARB(blurTexelSizeLoc, 1f / width, 1f / height)
+        ARBShaderObjects.glUniform1fARB(blurRadiusLoc, radius.toFloat())
+
+        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo1.framebufferObject)
+        ARBShaderObjects.glUniform2fARB(blurDirectionLoc, 1f, 0f)
+        GlStateManager.bindTexture(main.framebufferTexture)
+        drawFullscreenQuad(screenW, screenH)
+
+        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo2.framebufferObject)
+        ARBShaderObjects.glUniform2fARB(blurDirectionLoc, 0f, 1f)
+        GlStateManager.bindTexture(fbo1.framebufferTexture)
+        drawFullscreenQuad(screenW, screenH)
+
+        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, main.framebufferObject)
+        GlStateManager.viewport(0, 0, main.framebufferWidth, main.framebufferHeight)
+        ARBShaderObjects.glUseProgramObjectARB(0)
+        GlStateManager.enableBlend()
+        GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
+        GlStateManager.color(1f, 1f, 1f, 1f)
+        GlStateManager.bindTexture(fbo2.framebufferTexture)
+
+        withClipping(clip, Runnable {
+            GlStateManager.pushMatrix()
+            GlStateManager.loadIdentity()
+            drawFullscreenQuad(screenW, screenH)
+            GlStateManager.popMatrix()
+        })
+
+        GlStateManager.popMatrix()
+
+        if (blend) GlStateManager.enableBlend() else GlStateManager.disableBlend()
+        if (depth) GlStateManager.enableDepth() else GlStateManager.disableDepth()
+        if (texture) GlStateManager.enableTexture2D() else GlStateManager.disableTexture2D()
+        if (lighting) GlStateManager.enableLighting() else GlStateManager.disableLighting()
+        GlStateManager.color(1f, 1f, 1f, 1f)
+    }
+
+    private fun ensureBlurFbos(width: Int, height: Int): Boolean {
+        if (blurFbo != null && blurFbo!!.framebufferWidth == width && blurFbo!!.framebufferHeight == height) return true
+        blurFbo?.deleteFramebuffer()
+        blurFbo2?.deleteFramebuffer()
+        try {
+            blurFbo = Framebuffer(width, height, false)
+            blurFbo2 = Framebuffer(width, height, false)
+            setLinearFilter(blurFbo!!)
+            setLinearFilter(blurFbo2!!)
+            return true
+        } catch (e: Exception) {
+            return false
+        }
+    }
+
+    private fun setLinearFilter(fbo: Framebuffer) {
+        GlStateManager.bindTexture(fbo.framebufferTexture)
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR)
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR)
+    }
+
+    private fun ensureBlurShader(): Boolean {
+        if (blurProgram != -1) return true
+        val fragment = ARBShaderObjects.glCreateShaderObjectARB(GL20.GL_FRAGMENT_SHADER)
+        ARBShaderObjects.glShaderSourceARB(fragment, BLUR_SHADER)
+        ARBShaderObjects.glCompileShaderARB(fragment)
+        if (ARBShaderObjects.glGetObjectParameteriARB(fragment, ARBShaderObjects.GL_OBJECT_COMPILE_STATUS_ARB) == 0) {
+            ARBShaderObjects.glDeleteObjectARB(fragment)
+            return false
+        }
+        blurProgram = ARBShaderObjects.glCreateProgramObjectARB()
+        ARBShaderObjects.glAttachObjectARB(blurProgram, fragment)
+        ARBShaderObjects.glLinkProgramARB(blurProgram)
+        if (ARBShaderObjects.glGetObjectParameteriARB(blurProgram, ARBShaderObjects.GL_OBJECT_LINK_STATUS_ARB) == 0) {
+            ARBShaderObjects.glDeleteObjectARB(blurProgram)
+            blurProgram = -1
+            ARBShaderObjects.glDeleteObjectARB(fragment)
+            return false
+        }
+        ARBShaderObjects.glDeleteObjectARB(fragment)
+        blurTexelSizeLoc = ARBShaderObjects.glGetUniformLocationARB(blurProgram, "texelSize")
+        blurDirectionLoc = ARBShaderObjects.glGetUniformLocationARB(blurProgram, "direction")
+        blurRadiusLoc = ARBShaderObjects.glGetUniformLocationARB(blurProgram, "radius")
+        return true
+    }
+
+    private fun drawFullscreenQuad(width: Float, height: Float) {
+        GL11.glBegin(GL11.GL_QUADS)
+        GL11.glTexCoord2f(0f, 1f)
+        GL11.glVertex2f(0f, 0f)
+        GL11.glTexCoord2f(1f, 1f)
+        GL11.glVertex2f(width, 0f)
+        GL11.glTexCoord2f(1f, 0f)
+        GL11.glVertex2f(width, height)
+        GL11.glTexCoord2f(0f, 0f)
+        GL11.glVertex2f(0f, height)
+        GL11.glEnd()
     }
 
     @JvmStatic
