@@ -1,8 +1,11 @@
 ﻿package adreno.myauclickgui.feature.utils
 
+import adreno.myauclickgui.feature.types.fonts.Font
+import adreno.myauclickgui.feature.types.other.ARGBColor
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.client.renderer.GlStateManager
+import net.minecraft.client.renderer.texture.TextureUtil
 import net.minecraft.client.shader.Framebuffer
 import net.minecraft.util.ResourceLocation
 import org.lwjgl.BufferUtils
@@ -11,12 +14,15 @@ import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL13
 import org.lwjgl.opengl.GL20
 import org.lwjgl.opengl.GL30
+import java.awt.image.BufferedImage
 import java.nio.IntBuffer
 import java.util.*
+import javax.imageio.ImageIO
 
 object RenderUtil {
     private val mc = Minecraft.getMinecraft()
     private val scissorStack: Deque<IntArray> = ArrayDeque()
+    private val textureCache = HashMap<ResourceLocation, Int>()
     private var blurFbo: Framebuffer? = null
     private var blurFbo2: Framebuffer? = null
     private var blurProgram = -1
@@ -69,19 +75,45 @@ void main() {
 
     @JvmStatic
     fun drawRoundedRect(x: Float, y: Float, w: Float, h: Float, radius: Float, color: Int) {
-        if (radius <= 0f) {
-            drawRect(x, y, w, h, color)
-            return
-        }
-        var r = Math.min(radius, Math.min(w, h) / 2f)
+        drawRoundedRect(x, y, w, h, radius, radius, radius, radius, color)
+    }
+
+    @JvmStatic
+    fun drawRoundedRect(x: Float, y: Float, w: Float, h: Float,
+                        topLeft: Float, topRight: Float, bottomRight: Float, bottomLeft: Float, color: Int) {
+        val maxR = Math.min(w, h) / 2f
+        val tl = Math.min(topLeft, maxR)
+        val tr = Math.min(topRight, maxR)
+        val br = Math.min(bottomRight, maxR)
+        val bl = Math.min(bottomLeft, maxR)
 
         setGLState(color)
-        GL11.glBegin(GL11.GL_POLYGON)
-        val segments = Math.max(4, (r * 1.5f).toInt())
-        drawArc(x + r, y + r, r, 180f, 270f, segments)
-        drawArc(x + w - r, y + r, r, 270f, 360f, segments)
-        drawArc(x + w - r, y + h - r, r, 0f, 90f, segments)
-        drawArc(x + r, y + h - r, r, 90f, 180f, segments)
+        GL11.glBegin(GL11.GL_TRIANGLE_FAN)
+        GL11.glVertex2f(x + w / 2f, y + h / 2f)
+        val segments = Math.max(4, (Math.max(tl, Math.max(tr, Math.max(br, bl))) * 1.5f).toInt())
+        val startX = x
+        val startY = if (tl > 0f) y + tl else y
+        if (tl > 0f) {
+            drawArc(x + tl, y + tl, tl, 180f, 270f, segments)
+        } else {
+            GL11.glVertex2f(x, y)
+        }
+        if (tr > 0f) {
+            drawArc(x + w - tr, y + tr, tr, 270f, 360f, segments)
+        } else {
+            GL11.glVertex2f(x + w, y)
+        }
+        if (br > 0f) {
+            drawArc(x + w - br, y + h - br, br, 0f, 90f, segments)
+        } else {
+            GL11.glVertex2f(x + w, y + h)
+        }
+        if (bl > 0f) {
+            drawArc(x + bl, y + h - bl, bl, 90f, 180f, segments)
+        } else {
+            GL11.glVertex2f(x, y + h)
+        }
+        GL11.glVertex2f(startX, startY)
         GL11.glEnd()
         restoreGLState()
     }
@@ -213,6 +245,80 @@ void main() {
     }
 
     @JvmStatic
+    fun drawText(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
+        setGlyphState(color)
+        var dx = x
+        for (c in text) dx += drawGlyph(font, c, size, dx, y)
+        restoreGLState()
+        return Math.round(dx)
+    }
+
+    @JvmStatic
+    fun drawTextWithShadow(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
+        drawText(text, x + 1f, y + 1f, font, size, 0xAA000000.toInt())
+        return drawText(text, x, y, font, size, color)
+    }
+
+    @JvmStatic
+    fun drawTextVCenter(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
+        return drawText(text, x, y + font.getStringTopOffset(text, size), font, size, color)
+    }
+
+    @JvmStatic
+    fun drawTextCenter(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
+        val w = getTextWidth(text, font, size)
+        return drawText(text, x - w / 2f, y + font.getStringTopOffset(text, size), font, size, color)
+    }
+
+    @JvmStatic
+    fun drawCenteredText(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
+        return drawText(text, x - getStringWidth(text, font, size) / 2f, y, font, size, color)
+    }
+
+    @JvmStatic
+    fun drawCenteredTextWithShadow(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
+        return drawTextWithShadow(text, x - getStringWidth(text, font, size) / 2f, y, font, size, color)
+    }
+
+    @JvmStatic
+    fun drawTextWithFormatting(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
+        var dx = x
+        var current = color
+        val plain = StringBuilder()
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (c == '\u00a7' && i + 1 < text.length) {
+                val code = text[i + 1]
+                dx += drawText(plain.toString(), dx, y, font, size, current)
+                plain.setLength(0)
+                current = formatCode(code, color)
+                i += 2
+            } else {
+                plain.append(c)
+                i++
+            }
+        }
+        dx += drawText(plain.toString(), dx, y, font, size, current)
+        return Math.round(dx)
+    }
+
+    @JvmStatic
+    fun getStringWidth(text: String, font: Font, size: Float): Float = font.getStringWidth(text, size)
+
+    @JvmStatic
+    fun getFontHeight(font: Font, size: Float): Int = font.getHeight(size)
+
+    @JvmStatic
+    fun getTextWidth(text: String, font: Font, size: Float): Float = font.getStringWidth(text, size)
+
+    @JvmStatic
+    fun getTextHeight(text: String, font: Font, size: Float): Int = font.getStringHeight(text, size)
+
+    @JvmStatic
+    fun getTextHeight(font: Font, size: Float): Int = font.getHeight(size)
+
+    @JvmStatic
     fun getStringWidth(text: String): Int {
         return mc.fontRendererObj.getStringWidth(text)
     }
@@ -235,9 +341,11 @@ void main() {
     @JvmStatic
     fun drawTexture(texture: ResourceLocation, x: Float, y: Float, w: Float, h: Float,
                     u: Float, v: Float, u2: Float, v2: Float, color: Int) {
-        mc.textureManager.bindTexture(texture)
+        val texId = getTexture(texture)
+        if (texId == -1) return
         GlStateManager.enableBlend()
         GlStateManager.enableTexture2D()
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, texId)
         glColor(color)
         GL11.glBegin(GL11.GL_QUADS)
         GL11.glTexCoord2f(u, v)
@@ -252,9 +360,41 @@ void main() {
         restoreGLState()
     }
 
+    private fun getTexture(texture: ResourceLocation): Int {
+        val cached = textureCache[texture]
+        if (cached != null) return cached
+        val stream = javaClass.classLoader
+            .getResourceAsStream("assets/${texture.resourceDomain}/textures/${texture.resourcePath}")
+        if (stream == null) return -1
+        val texId = TextureUtil.glGenTextures()
+        try {
+            val img = ImageIO.read(stream)
+            val pixels = img.getRGB(0, 0, img.width, img.height, null, 0, img.width)
+            val buf = BufferUtils.createByteBuffer(img.width * img.height * 4)
+            for (p in pixels) {
+                buf.put(((p ushr 16) and 0xFF).toByte())
+                buf.put(((p ushr 8) and 0xFF).toByte())
+                buf.put((p and 0xFF).toByte())
+                buf.put(((p ushr 24) and 0xFF).toByte())
+            }
+            buf.flip()
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, texId)
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR)
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR)
+            GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA, img.width, img.height, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buf)
+            textureCache[texture] = texId
+            return texId
+        } catch (e: Exception) {
+            return -1
+        }
+    }
+
     @JvmStatic
     fun withClipping(clip: () -> Unit, render: () -> Unit) {
         ensureStencil()
+
+        val scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
+        if (scissor) GL11.glDisable(GL11.GL_SCISSOR_TEST)
 
         GL11.glEnable(GL11.GL_STENCIL_TEST)
         GL11.glClearStencil(0)
@@ -274,6 +414,8 @@ void main() {
         GL11.glStencilFunc(GL11.GL_ALWAYS, 0, 0xFF)
         GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
         GL11.glDisable(GL11.GL_STENCIL_TEST)
+
+        if (scissor) GL11.glEnable(GL11.GL_SCISSOR_TEST)
     }
 
     @JvmStatic
@@ -288,7 +430,7 @@ void main() {
 
     @JvmStatic
     fun beginScissor(x: Float, y: Float, w: Float, h: Float) {
-        val box: IntBuffer = BufferUtils.createIntBuffer(4)
+        val box: IntBuffer = BufferUtils.createIntBuffer(16)
         GL11.glGetInteger(GL11.GL_SCISSOR_BOX, box)
         scissorStack.push(intArrayOf(box.get(0), box.get(1), box.get(2), box.get(3)))
 
@@ -478,6 +620,33 @@ void main() {
     }
 
     @JvmStatic
+    fun isInside(x: Float, y: Float, w: Float, h: Float, radius: Float, mx: Float, my: Float): Boolean {
+        return isInside(x, y, w, h, radius, radius, radius, radius, mx, my)
+    }
+
+    @JvmStatic
+    fun isInside(x: Float, y: Float, w: Float, h: Float,
+                 topLeft: Float, topRight: Float, bottomRight: Float, bottomLeft: Float,
+                 mx: Float, my: Float): Boolean {
+        if (mx < x || mx > x + w || my < y || my > y + h) return false
+        if (mx < x + topLeft && my < y + topLeft) return inCircle(x + topLeft, y + topLeft, topLeft, mx, my)
+        if (mx > x + w - topRight && my < y + topRight) return inCircle(x + w - topRight, y + topRight, topRight, mx, my)
+        if (mx > x + w - bottomRight && my > y + h - bottomRight) {
+            return inCircle(x + w - bottomRight, y + h - bottomRight, bottomRight, mx, my)
+        }
+        if (mx < x + bottomLeft && my > y + h - bottomLeft) {
+            return inCircle(x + bottomLeft, y + h - bottomLeft, bottomLeft, mx, my)
+        }
+        return true
+    }
+
+    private fun inCircle(cx: Float, cy: Float, r: Float, mx: Float, my: Float): Boolean {
+        val dx = mx - cx
+        val dy = my - cy
+        return dx * dx + dy * dy <= r * r
+    }
+
+    @JvmStatic
     fun getScale(): Float {
         return ScaledResolution(mc).scaleFactor.toFloat()
     }
@@ -504,6 +673,15 @@ void main() {
                 (g * 255f + 0.5f).toInt(),
                 (b * 255f + 0.5f).toInt(),
                 (a * 255f + 0.5f).toInt())
+    }
+
+    @JvmStatic
+    fun parseARGB(color: Int): ARGBColor {
+        return ARGBColor(
+                r = color shr 16 and 0xFF,
+                g = color shr 8 and 0xFF,
+                b = color and 0xFF,
+                a = color shr 24 and 0xFF)
     }
 
     @JvmStatic
@@ -545,7 +723,54 @@ void main() {
         GlStateManager.enableBlend()
         GlStateManager.disableTexture2D()
         GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
+        GL11.glDisable(GL11.GL_CULL_FACE)
+        GL11.glDisable(GL11.GL_DEPTH_TEST)
         glColor(color)
+    }
+
+    private fun setGlyphState(color: Int) {
+        GlStateManager.enableBlend()
+        GlStateManager.enableTexture2D()
+        GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
+        glColor(color)
+    }
+
+    private fun drawGlyph(font: Font, c: Char, size: Float, x: Float, y: Float): Float {
+        val glyph = font.getGlyph(c, size)
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, glyph.textureId)
+        val top = y + glyph.offsetY
+        GL11.glBegin(GL11.GL_QUADS)
+        GL11.glTexCoord2f(0f, 0f)
+        GL11.glVertex2f(x, top)
+        GL11.glTexCoord2f(1f, 0f)
+        GL11.glVertex2f(x + glyph.width, top)
+        GL11.glTexCoord2f(1f, 1f)
+        GL11.glVertex2f(x + glyph.width, top + glyph.height)
+        GL11.glTexCoord2f(0f, 1f)
+        GL11.glVertex2f(x, top + glyph.height)
+        GL11.glEnd()
+        return glyph.advance
+    }
+
+    private fun formatCode(code: Char, fallback: Int): Int = when (code) {
+        '0' -> 0xFF000000.toInt()
+        '1' -> 0xFF0000AA.toInt()
+        '2' -> 0xFF00AA00.toInt()
+        '3' -> 0xFF00AAAA.toInt()
+        '4' -> 0xFFAA0000.toInt()
+        '5' -> 0xFFAA00AA.toInt()
+        '6' -> 0xFFFFAA00.toInt()
+        '7' -> 0xFFAAAAAA.toInt()
+        '8' -> 0xFF555555.toInt()
+        '9' -> 0xFF5555FF.toInt()
+        'a', 'A' -> 0xFF55FF55.toInt()
+        'b', 'B' -> 0xFF55FFFF.toInt()
+        'c', 'C' -> 0xFFFF5555.toInt()
+        'd', 'D' -> 0xFFFF55FF.toInt()
+        'e', 'E' -> 0xFFFFFF55.toInt()
+        'f', 'F' -> 0xFFFFFFFF.toInt()
+        'r', 'R' -> 0xFFFFFFFF.toInt()
+        else -> fallback
     }
 
     private fun gradientState() {

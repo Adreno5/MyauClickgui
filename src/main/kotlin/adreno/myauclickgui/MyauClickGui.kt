@@ -3,6 +3,7 @@ package adreno.myauclickgui
 import adreno.myauclickgui.feature.ClickGuiKeyBinding
 import adreno.myauclickgui.feature.gui.GuiClickGui
 import adreno.myauclickgui.feature.managers.ChatManager
+import adreno.myauclickgui.feature.types.config.Config
 import adreno.myauclickgui.feature.types.module.Module
 import net.minecraftforge.common.MinecraftForge
 import net.minecraftforge.fml.client.registry.ClientRegistry
@@ -12,15 +13,17 @@ import java.util.ArrayDeque
 import java.util.ArrayList
 
 @Mod(modid = MyauClickGui.MOD_ID, version = MyauClickGui.VERSION)
-object MyauClickGui {
-    const val MOD_ID = "MyauClickGui"
-    const val VERSION = "1.0.0"
+class MyauClickGui {
+    companion object {
+        const val MOD_ID = "MyauClickGui"
+        const val VERSION = "1.0.0"
 
-    private var INSTANCE: MyauClickGui? = null
+        private var INSTANCE: MyauClickGui? = null
 
-    @JvmStatic
-    fun getInstance(): MyauClickGui {
-        return INSTANCE!!
+        @JvmStatic
+        fun getInstance(): MyauClickGui {
+            return INSTANCE!!
+        }
     }
 
     var chatManager: ChatManager? = null
@@ -28,6 +31,7 @@ object MyauClickGui {
 
     val modules: ArrayList<Module> = ArrayList()
     val logs: ArrayDeque<String> = ArrayDeque()
+    val configs: ArrayDeque<Config> = ArrayDeque()
 
     init {
         INSTANCE = this

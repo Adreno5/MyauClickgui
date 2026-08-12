@@ -97,6 +97,10 @@ processResources
 
 task testParse(type: JavaExec) {
     dependsOn 'compileTestKotlin'
-    classpath = files(sourceSets.test.output) + sourceSets.test.runtimeClasspath
-    main = 'TestParse'
+    classpath = files('build/classes/kotlin/test') + sourceSets.test.output + sourceSets.test.runtimeClasspath
+    main = 'TestParseKt'
+}
+
+runClient {
+    outputs.upToDateWhen { false }
 }

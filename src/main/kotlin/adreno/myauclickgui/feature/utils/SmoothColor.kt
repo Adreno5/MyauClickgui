@@ -8,21 +8,35 @@ class SmoothColor(animationTime: Float, powerNumber: Int) {
     private val bt = EaseOut(animationTime, powerNumber)
     private val at = EaseOut(animationTime, powerNumber)
 
-    fun setTargetValue(color: Color) {
-        rt.setTargetValue(color.red.toFloat())
-        gr.setTargetValue(color.green.toFloat())
-        bt.setTargetValue(color.blue.toFloat())
-        at.setTargetValue(color.alpha.toFloat())
-    }
+    var targetColor: Int
+        get() = RenderUtil.getRGB(
+            clampColor(rt.targetValue),
+            clampColor(gr.targetValue),
+            clampColor(bt.targetValue),
+            clampColor(at.targetValue)
+        )
+        set(value) {
+            val parsed = RenderUtil.parseARGB(value)
+            rt.targetValue = parsed.r.toFloat()
+            gr.targetValue = parsed.g.toFloat()
+            bt.targetValue = parsed.b.toFloat()
+            at.targetValue = parsed.a.toFloat()
+        }
 
-    private fun clampColor(value: Float): Int = Math.max(0, Math.min(255, value.toInt()))
+    private fun clampColor(value: Float): Int = 0.coerceAtLeast(255.coerceAtMost(value.toInt()))
 
-    fun getCurrentValue(): Int {
-        return Color(
-            clampColor(rt.getCurrentValue()),
-            clampColor(gr.getCurrentValue()),
-            clampColor(bt.getCurrentValue()),
-            clampColor(at.getCurrentValue())
-        ).rgb
+    val currentValue: Int
+        get() = RenderUtil.getRGB(
+            clampColor(rt.currentValue),
+            clampColor(gr.currentValue),
+            clampColor(bt.currentValue),
+            clampColor(at.currentValue)
+        )
+
+    fun reset() {
+        rt.reset()
+        gr.reset()
+        bt.reset()
+        at.reset()
     }
 }

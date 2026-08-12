@@ -55,8 +55,6 @@ object ChatUtil {
             ErrorReply(e.stackTrace.contentToString())
         } catch (e: java.util.concurrent.ExecutionException) {
             ErrorReply(e.stackTrace.contentToString())
-        } finally {
-            SoundUtil.playDirect(sound)
         }
     }
 
