@@ -7,40 +7,26 @@ import adreno.myauclickgui.feature.types.module.Module
 import adreno.myauclickgui.feature.utils.ChatUtil
 import net.minecraft.client.Minecraft
 
-class ChatManager {
+object ChatManager {
     private val mc = Minecraft.getMinecraft()
     private val mod = MyauClickGui.getInstance()
     private val chat = ChatUtil()
 
     fun loadModules() {
-        Thread({ loadModulesWorker() }, "MyauClickGui-ModuleLoader")
-                .apply { isDaemon = true }.start()
-    }
+        Thread({
+            val reply = chat.getMyauReply(".modules")
 
-    private fun loadModulesWorker() {
-        val reply = chat.getMyauReply(".modules")
+            if (reply is ErrorReply) {
+                chat.log("Failed to load modules: " + reply.content)
+                return@Thread
+            }
 
-        if (reply is ErrorReply) {
-            chat.log("Failed to load modules: " + reply.content)
-            return
-        }
+            // module reply example
+            /* [Myau] Modules:
+               » Fullbright (ON)
+               » [R] KillAura (OFF) */
 
-        // module reply example
-        /* [Myau] Modules:
-           » Fullbright (ON)
-           » [R] KillAura (OFF) */
-
-        val (modules, errors) = parseModules((reply as OutputReply).unformatted)
-        mc.addScheduledTask {
-            mod.modules.clear()
-            mod.modules.addAll(modules)
-            errors.forEach { chat.err(it) }
-            chat.clog("Loaded " + mod.modules.size + " modules")
-        }
-    }
-
-    companion object {
-        fun parseModules(lines: List<String>): Pair<List<Module>, List<String>> {
+            val lines = (reply as OutputReply).unformatted
             val modules = ArrayList<Module>()
             val errors = ArrayList<String>()
             for (line in lines) {
@@ -59,7 +45,14 @@ class ChatManager {
 
                 modules.add(Module(moduleName, moduleState, moduleBinding))
             }
-            return modules to errors
-        }
+
+            mc.addScheduledTask {
+                mod.modules.clear()
+                mod.modules.addAll(modules)
+                errors.forEach { chat.err(it) }
+                chat.clog("Loaded " + mod.modules.size + " modules")
+            }
+        }, "MyauClickGui-ModuleLoader")
+                .apply { isDaemon = true }.start()
     }
 }

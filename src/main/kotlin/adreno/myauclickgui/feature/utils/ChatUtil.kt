@@ -17,10 +17,8 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-class ChatUtil {
-    companion object {
-        private val mc = Minecraft.getMinecraft()
-    }
+object ChatUtil {
+    private val mc = Minecraft.getMinecraft()
 
     private val mod = MyauClickGui.getInstance()
     private val formatted = ArrayList<String>()

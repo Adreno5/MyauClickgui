@@ -12,17 +12,15 @@ import java.util.ArrayDeque
 import java.util.ArrayList
 
 @Mod(modid = MyauClickGui.MOD_ID, version = MyauClickGui.VERSION)
-class MyauClickGui {
-    companion object {
-        const val MOD_ID = "MyauClickGui"
-        const val VERSION = "1.0.0"
+object MyauClickGui {
+    const val MOD_ID = "MyauClickGui"
+    const val VERSION = "1.0.0"
 
-        private var INSTANCE: MyauClickGui? = null
+    private var INSTANCE: MyauClickGui? = null
 
-        @JvmStatic
-        fun getInstance(): MyauClickGui {
-            return INSTANCE!!
-        }
+    @JvmStatic
+    fun getInstance(): MyauClickGui {
+        return INSTANCE!!
     }
 
     var chatManager: ChatManager? = null
@@ -37,8 +35,8 @@ class MyauClickGui {
 
     @Mod.EventHandler
     fun `init`(ignored: FMLInitializationEvent) {
-        chatManager = ChatManager()
-        guiClickGui = GuiClickGui()
+        chatManager = ChatManager
+        guiClickGui = GuiClickGui
         ClientRegistry.registerKeyBinding(ClickGuiKeyBinding.keyGui)
         MinecraftForge.EVENT_BUS.register(ClickGuiKeyBinding())
         MinecraftForge.EVENT_BUS.register(chatManager)
