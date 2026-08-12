@@ -7,14 +7,14 @@ class EaseOut(animationTime: Float, powerNumber: Int) {
 
     private var lastUpdate = System.nanoTime()
 
-    var animCycle: Float = Math.max(0.001f, animationTime)
+    var animCycle: Float = 0.001f.coerceAtLeast(animationTime)
         set(value) {
-            field = Math.max(0.001f, value)
+            field = 0.001f.coerceAtLeast(value)
         }
 
-    var powerNumber: Int = Math.max(1, powerNumber)
+    var powerNumber: Int = 1.coerceAtLeast(powerNumber)
         set(value) {
-            field = Math.max(1, value)
+            field = 1.coerceAtLeast(value)
         }
 
     fun getTargetValue(): Float = targetValue

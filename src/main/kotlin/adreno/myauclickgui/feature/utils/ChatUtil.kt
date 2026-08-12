@@ -38,7 +38,7 @@ class ChatUtil {
     )
 
     fun getMyauReply(prompt: String): MyauReply {
-        check(!mc.isCallingFromMinecraftThread()) {
+        check(!mc.isCallingFromMinecraftThread) {
             "getMyauReply must not be called from the Minecraft main thread"
         }
         val future = CompletableFuture<MyauReply>()
@@ -54,9 +54,9 @@ class ChatUtil {
         return try {
             future.get()
         } catch (e: InterruptedException) {
-            ErrorReply(Arrays.toString(e.stackTrace))
+            ErrorReply(e.stackTrace.contentToString())
         } catch (e: java.util.concurrent.ExecutionException) {
-            ErrorReply(Arrays.toString(e.stackTrace))
+            ErrorReply(e.stackTrace.contentToString())
         } finally {
             SoundUtil.playDirect(sound)
         }
@@ -105,11 +105,11 @@ class ChatUtil {
     }
 
     fun log(message: String) {
-        mc.ingameGUI.chatGUI.printChatMessage(ChatComponentText("§7[§fMyauClickGui]§7 " + message))
+        mc.ingameGUI.chatGUI.printChatMessage(ChatComponentText("§7[§fMyauClickGui]§7 $message"))
     }
 
     fun err(message: String) {
-        mc.ingameGUI.chatGUI.printChatMessage(ChatComponentText("§7[§cMyauClickGui · Error]§7 " + message))
+        mc.ingameGUI.chatGUI.printChatMessage(ChatComponentText("§7[§cMyauClickGui · Error]§7 $message"))
         SoundUtil.playDirect(sound)
     }
 }
