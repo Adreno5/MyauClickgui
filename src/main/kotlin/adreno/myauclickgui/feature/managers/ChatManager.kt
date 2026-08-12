@@ -10,7 +10,7 @@ import net.minecraft.client.Minecraft
 object ChatManager {
     private val mc = Minecraft.getMinecraft()
     private val mod = MyauClickGui.getInstance()
-    private val chat = ChatUtil()
+    private val chat = ChatUtil
 
     fun loadModules() {
         Thread({
