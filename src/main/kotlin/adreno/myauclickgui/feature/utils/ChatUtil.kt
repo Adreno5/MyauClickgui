@@ -38,6 +38,9 @@ class ChatUtil {
     )
 
     fun getMyauReply(prompt: String): MyauReply {
+        check(!mc.isCallingFromMinecraftThread()) {
+            "getMyauReply must not be called from the Minecraft main thread"
+        }
         val future = CompletableFuture<MyauReply>()
         synchronized(this) {
             if (mc.thePlayer == null) {
@@ -48,12 +51,12 @@ class ChatUtil {
                 startCollect(prompt, future)
             }
         }
-        try {
-            return future.get()
+        return try {
+            future.get()
         } catch (e: InterruptedException) {
-            return ErrorReply(Arrays.toString(e.stackTrace))
+            ErrorReply(Arrays.toString(e.stackTrace))
         } catch (e: java.util.concurrent.ExecutionException) {
-            return ErrorReply(Arrays.toString(e.stackTrace))
+            ErrorReply(Arrays.toString(e.stackTrace))
         } finally {
             SoundUtil.playDirect(sound)
         }
@@ -63,9 +66,11 @@ class ChatUtil {
         formatted.clear()
         unformatted.clear()
         listening = true
-        mc.thePlayer!!.sendChatMessage(prompt)
+        mc.addScheduledTask { mc.thePlayer!!.sendChatMessage(prompt) }
 
-        scheduler.schedule({ finishCollect(prompt, future) }, 100L, TimeUnit.MILLISECONDS)
+        scheduler.schedule({
+            mc.addScheduledTask { finishCollect(prompt, future) }
+        }, 100L, TimeUnit.MILLISECONDS)
     }
 
     private fun finishCollect(prompt: String, future: CompletableFuture<MyauReply>) {

@@ -1,8 +1,11 @@
 package adreno.myauclickgui
 
+import adreno.myauclickgui.feature.ClickGuiKeyBinding
 import adreno.myauclickgui.feature.gui.GuiClickGui
 import adreno.myauclickgui.feature.managers.ChatManager
 import adreno.myauclickgui.feature.types.module.Module
+import net.minecraftforge.common.MinecraftForge
+import net.minecraftforge.fml.client.registry.ClientRegistry
 import net.minecraftforge.fml.common.Mod
 import net.minecraftforge.fml.common.event.FMLInitializationEvent
 import java.util.ArrayDeque
@@ -36,5 +39,8 @@ class MyauClickGui {
     fun `init`(ignored: FMLInitializationEvent) {
         chatManager = ChatManager()
         guiClickGui = GuiClickGui()
+        ClientRegistry.registerKeyBinding(ClickGuiKeyBinding.keyGui)
+        MinecraftForge.EVENT_BUS.register(ClickGuiKeyBinding())
+        MinecraftForge.EVENT_BUS.register(chatManager)
     }
 }
