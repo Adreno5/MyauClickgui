@@ -3,6 +3,10 @@ package adreno.myauclickgui.feature.gui
 import adreno.myauclickgui.MyauClickGui
 import adreno.myauclickgui.feature.types.fonts.Fonts
 import adreno.myauclickgui.feature.types.module.Module
+import adreno.myauclickgui.feature.types.module.settings.BooleanSetting
+import adreno.myauclickgui.feature.types.module.settings.ModeSetting
+import adreno.myauclickgui.feature.types.module.settings.NumberSetting
+import adreno.myauclickgui.feature.types.module.settings.Setting
 import adreno.myauclickgui.feature.utils.EaseInOut
 import adreno.myauclickgui.feature.utils.EaseOut
 import adreno.myauclickgui.feature.utils.RenderUtil
@@ -10,12 +14,16 @@ import adreno.myauclickgui.feature.utils.SmoothColor
 import adreno.myauclickgui.feature.utils.SoundUtil
 import net.minecraft.client.gui.GuiScreen
 import net.minecraft.client.gui.ScaledResolution
+import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.util.ResourceLocation
 import org.lwjgl.input.Keyboard
 import org.lwjgl.input.Mouse
+import scala.annotation.switch
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
+import java.util.Random
+import kotlin.math.abs
 
 object GuiClickGui : GuiScreen() {
     private val mod = MyauClickGui.getInstance()
@@ -25,9 +33,11 @@ object GuiClickGui : GuiScreen() {
     override fun initGui() {
         SoundUtil.playDirect(sound)
         super.initGui()
-        if (mod.modules.isEmpty())
-            mod.chatManager?.loadModules()
-        mod.chatManager?.loadConfigs()
+        if (mod.modules.isEmpty()) {
+            loadingModules = true
+            chat?.loadModules()
+        }
+        chat?.loadConfigs()
     }
 
     private var searchTyping: Boolean = false
@@ -52,10 +62,28 @@ object GuiClickGui : GuiScreen() {
     private val placeAlpha = EaseOut(0.3f, 1)
     private val shownModules: MutableList<Module> = mutableListOf()
     private val searchIcon = ResourceLocation("myauclickgui", "images/search.png")
+    private val moduleOpenMap = LinkedHashMap<Module, EaseInOut>()
+    private val switchXMap = LinkedHashMap<BooleanSetting, EaseInOut>()
+    private val SliderXMap = LinkedHashMap<NumberSetting, EaseInOut>()
+    private val r = Random()
+
+    private var loadingModules = false
+    private var loadingSettingsSuffix = ""
 
     init {
         leftColor.targetColor = 0x2A1F085C.toInt()
         placeAlpha.targetValue = 1f
+
+        // test
+//        for (i in 0 until 100) {
+//            val rSettings = ArrayList<Setting<*>>()
+//            val settingCount = r.nextInt() % 10 + 3
+//            for (j in 1 until settingCount) {
+//                val t = r.nextInt() % 3
+//                rSettings.add(if (t == 0) BooleanSetting("TestBooleanSetting $j", r.nextBoolean()) else if (t == 1) NumberSetting("TestNumberSetting $j", r.nextFloat() % 1f, Pair(0f, 1f)) else ModeSetting("TestModeSetting $j", "Option 2", listOf("Option 1", "Option 2", "Option 3")))
+//            }
+//            mod.modules.add(Module("TestModule $i", r.nextBoolean(), null, rSettings))
+//        }
     }
 
     override fun mouseClicked(mouseX: Int, mouseY: Int, mouseButton: Int) {
@@ -65,6 +93,153 @@ object GuiClickGui : GuiScreen() {
     override fun handleMouseInput() {
         pendingWheel = (pendingWheel ?: 0) + Mouse.getEventDWheel()
         super.handleMouseInput()
+    }
+
+    override fun drawScreen(mouseX: Int, mouseY: Int, partialTicks: Float) {
+        preProcess()
+        render(mouseX, mouseY, pendingClick, pendingWheel)
+        pendingClick = null
+        pendingWheel = null
+    }
+
+    fun render(mouseX: Int, mouseY: Int, mouseButton: Int?, wheel: Int?) {
+        val sr = ScaledResolution(mc)
+        val sw = sr.scaledWidth
+        val sh = sr.scaledHeight
+        val lWidth = sw * 0.15f
+        val rWidth = sw * 0.43f * panelExpand.currentValue
+        val sHeight = sh * 0.76f
+        val searchHeight = sh * 0.05f
+        if (panelExpand.targetValue == 1f)
+            leftColor.targetColor = 0x2A100430.toInt()
+        else if (panelExpand.targetValue == 0f)
+            leftColor.targetColor = 0x2A1F085C.toInt()
+        val x = (sw - lWidth - rWidth) / 2
+        val y = (sh - sHeight) / 2
+        val radius = (1 - panelExpand.currentValue) * 8f
+        val typingWidth = sw * (0.15f - 0.017f)
+        val typingX = x + sw * 0.025f
+        val textWidths = FloatArray(searchText.length + 1)
+        var textWidthAcc = 0f
+        for (i in searchText.indices) {
+            textWidthAcc += RenderUtil.getTextWidth(searchText[i].toString(), Fonts.HarmonyOS, 14f)
+            textWidths[i + 1] = textWidthAcc
+        }
+        panelExpand.targetValue = if (configuringModule == null) 0f else 1f;
+
+        if (System.nanoTime() - cursorLastUpdate > 500000000L) {
+            cursorLastUpdate = System.nanoTime()
+            cursorAlpha.targetValue = 1f - cursorAlpha.currentValue
+        }
+
+        if (mouseButton == 0) {
+            val inSearch = RenderUtil.isInside(x, y, lWidth, searchHeight, 8f, 8f, 0f, 0f, mouseX.toFloat(), mouseY.toFloat())
+            searchTyping = inSearch
+            if (inSearch) {
+                searchCursor = charIndexAt(mouseX.toFloat() - typingX - searchScroll.currentValue, textWidths)
+                selectAnchor = searchCursor
+                searchSelectRange = null
+            } else {
+                selectAnchor = null
+            }
+            searchLine.targetValue = if (searchTyping) 1f else 0f
+        }
+        if (selectAnchor != null && Mouse.isButtonDown(0)) {
+            searchCursor = charIndexAt(mouseX.toFloat() - typingX - searchScroll.currentValue, textWidths)
+            val anchor = selectAnchor!!
+            searchSelectRange = minOf(searchCursor, anchor) until maxOf(searchCursor, anchor)
+        }
+        if (wheel != null && wheel != 0) {
+            val offset = sh * (if (wheel > 0) 0.1f else -0.1f)
+            if (RenderUtil.isInside(x, y, lWidth, searchHeight, 8f, radius, radius, 8f, mouseX.toFloat(), mouseY.toFloat()))
+                searchScroll.targetValue += offset
+            else if (RenderUtil.isInside(x, y + searchHeight, lWidth, sHeight - searchHeight, 8f, mouseX.toFloat(), mouseY.toFloat()))
+                moduleScroll.targetValue += offset
+            else if (RenderUtil.isInside(x + lWidth, y, rWidth, sHeight, 0f, 8f, 8f, 0f, mouseX.toFloat(), mouseY.toFloat()))
+                configurationScroll.targetValue += offset
+        }
+
+        RenderUtil.renderBlur({
+            RenderUtil.drawRoundedRect(x, y, lWidth + rWidth, sHeight, 8f, -1)
+        }, 48)
+        RenderUtil.drawRoundedRect(x, y, lWidth, searchHeight, 8f, 8f, 0f, 0f, 0xD51E1732.toInt())
+
+        RenderUtil.drawRoundedRect(x, y, lWidth + rWidth, sHeight, 8f, 0xD5070312.toInt())
+        RenderUtil.drawRoundedRect(x, y, lWidth, sHeight, 8f, radius, radius, 8f, leftColor.currentValue)
+        RenderUtil.drawRect(x, y + searchHeight - 1, lWidth * searchLine.currentValue, 2f, 0xFF93A8E4.toInt())
+        RenderUtil.drawTexture(searchIcon, x + sw * 0.003f, y + sh * 0.007f, sh * 0.036f, sh * 0.036f)
+        val searchTWidth = textWidths[searchCursor.coerceIn(0, searchText.length)]
+        val searchTHeight = RenderUtil.getTextHeight(searchText, Fonts.HarmonyOS, 14f).toFloat()
+        if (searchText.isEmpty() && !searchTyping)
+            RenderUtil.drawTextVCenter("Search...", x + sw * 0.025f, y + (searchHeight - searchTHeight) / 2f, Fonts.HarmonyOS, 14f, RenderUtil.getRGB(225, 225, 225, (225 * placeAlpha.currentValue).toInt()))
+        cursorX.targetValue = searchTWidth + 0.7f
+        if (searchText.isNotEmpty() || searchTyping)
+            RenderUtil.withClipping({
+                RenderUtil.drawRect(typingX, y, typingWidth - 4f, searchHeight, -1)
+            }, {
+                val range = searchSelectRange
+                if (range != null && range.first < range.last) {
+                    selectLeft.targetValue = textWidths[range.first]
+                    selectRight.targetValue = textWidths[range.last + 1]
+                    val selX = typingX + selectLeft.currentValue + searchScroll.currentValue
+                    val selW = typingX + selectRight.currentValue + searchScroll.currentValue - selX
+                    RenderUtil.drawRect(selX, y + (searchHeight - searchTHeight) / 2f, selW, searchTHeight, 0x4D409CFF.toInt())
+                }
+                RenderUtil.drawRect(typingX + cursorX.currentValue + searchScroll.currentValue, y + (searchHeight - searchTHeight) / 2f, 1f, searchTHeight,
+                    RenderUtil.getRGB(245, 248, 255, (255 * cursorAlpha.currentValue).toInt()))
+                RenderUtil.drawTextVCenter(searchText, typingX + searchScroll.currentValue, y + (searchHeight - searchTHeight) / 2f, Fonts.HarmonyOS, 14f, -1)
+            })
+        if (loadingModules)
+            RenderUtil.drawTextCenter("Loading modules...", x + lWidth / 2f,
+                y + searchHeight + (sHeight - searchHeight) / 2f, Fonts.HarmonyOS, 14f, -1)
+        else
+            RenderUtil.withClipping({
+                RenderUtil.drawRoundedRect(x, y + searchHeight, lWidth, sHeight - searchHeight, 0f, 0f, 8f, 8f, -1)
+            }, {
+                val hGap = sw * 0.03f
+                val vGap = sh * 0.009f
+                val cHeight = sh * 0.045f
+                var dy = y + searchHeight + 5 + moduleScroll.currentValue - cHeight - vGap
+                val listTop = y + searchHeight
+                val listBottom = y + sHeight
+                for (module in mod.modules) {
+                    val open = moduleOpenMap.getOrPut(module, { EaseInOut(0.3f, 3) })
+                    open.targetValue = if (module.state) 1f else 0f
+                    dy += cHeight + vGap
+                    if (dy + 25f < listTop - 100f || dy > listBottom + 100f) {
+                        continue
+                    }
+                    val leftR = open.currentValue * cHeight / 2f
+                    val rightR = cHeight / 2f - leftR
+                    if (mouseButton != null) {
+                        val isIn = RenderUtil.isInside(x, y + searchHeight, lWidth, sHeight - searchHeight, 0f, 0f, 8f, 8f, mouseX.toFloat(), mouseY.toFloat()) &&
+                                RenderUtil.isInside(x + open.currentValue * hGap, dy, lWidth - hGap, 25f, leftR, rightR, rightR, leftR, mouseX.toFloat(), mouseY.toFloat())
+                        if (mouseButton == 0 && isIn) {
+                            chat!!.toggleModule(module)
+                            module.state = !module.state
+                        }
+                        if (mouseButton == 1 && isIn)
+                            configuringModule = module
+                    }
+                    RenderUtil.drawRoundedRect(x + open.currentValue * hGap, dy, lWidth - hGap, 25f,
+                        leftR, rightR, rightR, leftR, 0xA11D1072.toInt())
+                    RenderUtil.drawTextCenter(module.name, x + lWidth / 2f, dy + 12.5f, Fonts.HarmonyOS, 14f, -1)
+                }
+            })
+        if (mouseButton == 0 && !RenderUtil.isInside(x, y, lWidth + rWidth, sHeight, 8f, mouseX.toFloat(), mouseY.toFloat())) {
+            configuringModule = null
+        }
+        GlStateManager.color(1f, 1f, 1f, 1f)
+        GlStateManager.enableTexture2D()
+        GlStateManager.disableBlend()
+        GlStateManager.enableDepth()
+        GlStateManager.enableCull()
+        org.lwjgl.opengl.GL13.glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE0)
+    }
+
+    fun preProcess() {
+        if (mod.modules.isNotEmpty() && loadingModules)
+            loadingModules = false
     }
 
     override fun keyTyped(typedChar: Char, keyCode: Int) {
@@ -155,106 +330,13 @@ object GuiClickGui : GuiScreen() {
         var best = 0
         var bestDist = Float.MAX_VALUE
         for (i in widths.indices) {
-            val d = Math.abs(widths[i] - relX)
+            val d = abs(widths[i] - relX)
             if (d < bestDist) {
                 bestDist = d
                 best = i
             }
         }
         return best
-    }
-
-    override fun drawScreen(mouseX: Int, mouseY: Int, partialTicks: Float) {
-        render(mouseX, mouseY, pendingClick, pendingWheel)
-        pendingClick = null
-        pendingWheel = null
-    }
-
-    fun render(mouseX: Int, mouseY: Int, mouseButton: Int?, wheel: Int?) {
-        val sr = ScaledResolution(mc)
-        val sw = sr.scaledWidth
-        val sh = sr.scaledHeight
-        val lWidth = sw * 0.15f
-        val rWidth = sw * 0.43f * panelExpand.currentValue
-        val sHeight = sh * 0.76f
-        val searchHeight = sh * 0.05f
-        if (panelExpand.targetValue == 1f)
-            leftColor.targetColor = 0x2A100430.toInt()
-        else if (panelExpand.targetValue == 0f)
-            leftColor.targetColor = 0x2A1F085C.toInt()
-        val x = (sw - lWidth - rWidth) / 2
-        val y = (sh - sHeight) / 2
-        val radius = (1 - panelExpand.currentValue) * 8f
-        val typingWidth = sw * (0.15f - 0.017f)
-        val typingX = x + sw * 0.025f
-        val textWidths = FloatArray(searchText.length + 1)
-        var textWidthAcc = 0f
-        for (i in searchText.indices) {
-            textWidthAcc += RenderUtil.getTextWidth(searchText[i].toString(), Fonts.HarmonyOS, 14f)
-            textWidths[i + 1] = textWidthAcc
-        }
-
-        if (System.nanoTime() - cursorLastUpdate > 500000000L) {
-            cursorLastUpdate = System.nanoTime()
-            cursorAlpha.targetValue = 1f - cursorAlpha.currentValue
-        }
-
-        if (mouseButton == 0) {
-            val inSearch = RenderUtil.isInside(x, y, lWidth, searchHeight, 8f, 8f, 0f, 0f, mouseX.toFloat(), mouseY.toFloat())
-            searchTyping = inSearch
-            if (inSearch) {
-                searchCursor = charIndexAt(mouseX.toFloat() - typingX - searchScroll.currentValue, textWidths)
-                selectAnchor = searchCursor
-                searchSelectRange = null
-            } else {
-                selectAnchor = null
-            }
-            searchLine.targetValue = if (searchTyping) 1f else 0f
-        }
-        if (selectAnchor != null && Mouse.isButtonDown(0)) {
-            searchCursor = charIndexAt(mouseX.toFloat() - typingX - searchScroll.currentValue, textWidths)
-            val anchor = selectAnchor!!
-            searchSelectRange = minOf(searchCursor, anchor) until maxOf(searchCursor, anchor)
-        }
-        if (wheel != null && wheel != 0) {
-            val offset = sh * (if (wheel > 0) 0.07f else -0.07f)
-            if (RenderUtil.isInside(x, y, lWidth, sHeight, 8f, radius, radius, 8f, mouseX.toFloat(), mouseY.toFloat()))
-                searchScroll.targetValue += offset
-            else if (RenderUtil.isInside(x, y + searchHeight, lWidth, sHeight - searchHeight, 8f, mouseX.toFloat(), mouseY.toFloat()))
-                moduleScroll.targetValue += offset
-            else if (RenderUtil.isInside(x + lWidth, y, rWidth, sHeight, 0f, 8f, 7f, 0f, mouseX.toFloat(), mouseY.toFloat()))
-                configurationScroll.targetValue += offset
-        }
-
-        RenderUtil.renderBlur({
-            RenderUtil.drawRoundedRect(x, y, lWidth, sHeight, 8f, radius, radius, 8f, -1)
-        }, 48)
-        RenderUtil.drawRoundedRect(x, y, lWidth, searchHeight, 8f, 8f, 0f, 0f, 0xD51E1732.toInt())
-        RenderUtil.drawRoundedRect(x, y, lWidth + rWidth, sHeight, 8f, 0xD5070312.toInt())
-        RenderUtil.drawRoundedRect(x, y, lWidth, sHeight, 8f, radius, radius, 8f, leftColor.currentValue)
-        RenderUtil.drawRect(x, y + searchHeight - 1, lWidth * searchLine.currentValue, 2f, 0xFF93A8E4.toInt())
-        RenderUtil.drawTexture(searchIcon, x + sw * 0.003f, y + sh * 0.007f, sh * 0.036f, sh * 0.036f)
-        val searchTWidth = textWidths[searchCursor.coerceIn(0, searchText.length)]
-        val searchTHeight = RenderUtil.getTextHeight(searchText, Fonts.HarmonyOS, 14f).toFloat()
-        if (searchText.isEmpty() && !searchTyping)
-            RenderUtil.drawTextVCenter("Search...", x + sw * 0.025f, y + (searchHeight - searchTHeight) / 2f, Fonts.HarmonyOS, 14f, RenderUtil.getRGB(225, 225, 225, (225 * placeAlpha.currentValue).toInt()))
-        cursorX.targetValue = searchTWidth + 0.7f
-        if (searchText.isNotEmpty() || searchTyping)
-            RenderUtil.withClipping({
-                RenderUtil.drawRect(typingX, y, typingWidth - 4f, searchHeight, -1)
-            }, {
-                val range = searchSelectRange
-                if (range != null && range.first < range.last) {
-                    selectLeft.targetValue = textWidths[range.first]
-                    selectRight.targetValue = textWidths[range.last + 1]
-                    val selX = typingX + selectLeft.currentValue + searchScroll.currentValue
-                    val selW = typingX + selectRight.currentValue + searchScroll.currentValue - selX
-                    RenderUtil.drawRect(selX, y + (searchHeight - searchTHeight) / 2f, selW, searchTHeight, 0x4D409CFF.toInt())
-                }
-                RenderUtil.drawRect(typingX + cursorX.currentValue + searchScroll.currentValue, y + (searchHeight - searchTHeight) / 2f, 1f, searchTHeight,
-                    RenderUtil.getRGB(245, 248, 255, (255 * cursorAlpha.currentValue).toInt()))
-                RenderUtil.drawTextVCenter(searchText, typingX + searchScroll.currentValue, y + (searchHeight - searchTHeight) / 2f, Fonts.HarmonyOS, 14f, -1)
-            })
     }
 
     override fun onGuiClosed() {

@@ -6,9 +6,8 @@ import adreno.myauclickgui.feature.types.chat.MyauReply
 import adreno.myauclickgui.feature.types.chat.OutputReply
 import net.minecraft.client.Minecraft
 import net.minecraft.util.ChatComponentText
+import net.minecraft.util.IChatComponent
 import net.minecraft.util.ResourceLocation
-import net.minecraftforge.client.event.ClientChatReceivedEvent
-import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
 import java.util.ArrayDeque
 import java.util.ArrayList
 import java.util.Arrays
@@ -66,7 +65,7 @@ object ChatUtil {
 
         scheduler.schedule({
             mc.addScheduledTask { finishCollect(prompt, future) }
-        }, 100L, TimeUnit.MILLISECONDS)
+        }, 120L, TimeUnit.MILLISECONDS)
     }
 
     private fun finishCollect(prompt: String, future: CompletableFuture<MyauReply>) {
@@ -83,15 +82,18 @@ object ChatUtil {
             startCollect(pending.prompt, pending.future)
     }
 
-    @SubscribeEvent
-    fun onReceive(event: ClientChatReceivedEvent) {
-        if (event.type != 1.toByte()) return
-        formatted.add(event.message.formattedText)
-        unformatted.add(event.message.unformattedText)
+    @JvmStatic
+    fun onChatMessage(component: IChatComponent, chatLineId: Int): Boolean { // hooked by mixin
+        val text = component.unformattedText
+        val plain = text.replace(Regex("§."), "")
+        val match = plain.startsWith("[Myau]") || plain.startsWith("»")
+        if (!match) return false
+        unformatted.add(plain)
         if (listening) {
-            event.isCanceled = true
-            clog(event.message.unformattedText)
+            clog(plain)
+            return true
         }
+        return false
     }
 
     fun clog(message: String) {

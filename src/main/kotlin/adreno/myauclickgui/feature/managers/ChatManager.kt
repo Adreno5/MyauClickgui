@@ -5,6 +5,10 @@ import adreno.myauclickgui.feature.types.chat.ErrorReply
 import adreno.myauclickgui.feature.types.chat.OutputReply
 import adreno.myauclickgui.feature.types.config.Config
 import adreno.myauclickgui.feature.types.module.Module
+import adreno.myauclickgui.feature.types.module.settings.BooleanSetting
+import adreno.myauclickgui.feature.types.module.settings.ModeSetting
+import adreno.myauclickgui.feature.types.module.settings.NumberSetting
+import adreno.myauclickgui.feature.types.module.settings.Setting
 import adreno.myauclickgui.feature.utils.ChatUtil
 import net.minecraft.client.Minecraft
 
@@ -25,6 +29,80 @@ object ChatManager {
             }
         }, "MyauClickGui-ConfigApplier")
             .apply { isDaemon = true }.start()
+    }
+
+    fun toggleModule(target: Module) {
+        Thread({
+            val reply = chat.getMyauReply(".toggle ${target.name}")
+
+            if (reply is ErrorReply) {
+                chat.err("Failed to toggle module: " + reply.content)
+                return@Thread
+            }
+        }, "MyauClickGui-Toggler")
+            .apply { isDaemon= true }.start()
+    }
+
+    fun loadSettingsForModule(target: Module): ArrayList<Setting<*>> {
+        val settings: ArrayList<Setting<*>> = ArrayList()
+        val errors: MutableList<String> = mutableListOf()
+        Thread({
+            val reply = chat.getMyauReply(".${target.name}")
+
+            if (reply is ErrorReply) {
+                chat.err("Failed to load configs: " + reply.content)
+                return@Thread
+            }
+
+            // settings reply example (. + Module name)
+            /*  [Myau] KillAura (OFF):
+                » mode: SINGLE // Mode Setting
+                » sort: DISTANCE
+                » auto-block: SPOOF
+                » auto-block-require-press: false // Boolean Setting
+                » auto-block-no-slow: false
+                » auto-block-hold: 1.5 // Number Setting */
+            for (line in (reply as OutputReply).unformatted) {
+                if (!line.startsWith("»"))
+                    continue
+                val settingName = line.substringAfter("» ").substringBefore(": ")
+                val valueString = line.substringAfter(": ")
+                val setting = if (valueString == "false" || valueString == "true") BooleanSetting(settingName, valueString.toBoolean())
+                else if (valueString.toDoubleOrNull() != null) {
+                    // Number Setting reply example (. + Module name + Setting name (+ value))
+                    // [Myau] KillAura: angle-step is set to 90 (30-180)
+                    val sReply = chat.getMyauReply(".${target.name} $settingName")
+                    if (sReply is ErrorReply) {
+                        errors.add("Failed to load setting $settingName: ${sReply.content}")
+                        continue
+                    }
+                    val lineOutput = (sReply as OutputReply).unformatted[0]
+                    val settingValue = lineOutput.substringAfter("is set to ").substringBefore(" (").toDouble()
+                    val settingMin = lineOutput.substringAfter(" (").substringBefore("-").toDouble()
+                    val settingMax = lineOutput.substringAfter("-").substringBefore(")").toDouble()
+                    NumberSetting(settingName, settingValue.toFloat(), Pair(settingMin.toFloat(), settingMax.toFloat()))
+                } else {
+                    // Mode Setting reply example (. + Module name + Setting name)
+                    // [Myau] KillAura: mode is set to SINGLE (SINGLE, SWITCH)
+                    val sReply = chat.getMyauReply(".${target.name} $settingName")
+                    if (sReply is ErrorReply) {
+                        errors.add("Failed to load setting $settingName: ${sReply.content}")
+                        continue
+                    }
+                    val lineOutput = (sReply as OutputReply).unformatted[0]
+                    val settingValue = lineOutput.substringAfter("is set to ").substringBefore(" (")
+                    val settingModes = lineOutput.substringAfter("(").substringBefore(")").split(", ")
+                    ModeSetting(settingName, settingValue, arrayListOf(settingModes))
+                }
+            }
+
+            mc.addScheduledTask {
+                errors.forEach { chat.err(it) }
+                chat.clog("Loaded ${settings.size} settings")
+            }
+        }, "MyauClickGui-SettingsCollector")
+            .apply { isDaemon = true }.start()
+        return settings
     }
 
     fun loadConfigs() {

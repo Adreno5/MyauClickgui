@@ -1,5 +1,6 @@
 package adreno.myauclickgui.feature.types.fonts
 
+import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.renderer.texture.TextureUtil
 import org.lwjgl.BufferUtils
 import org.lwjgl.opengl.GL11
@@ -66,7 +67,7 @@ class Font(val name: String) {
         buf.flip()
 
         val texId = TextureUtil.glGenTextures()
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, texId)
+        GlStateManager.bindTexture(texId)
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR)
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR)
         GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA, w, h, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buf)
@@ -85,12 +86,12 @@ class Font(val name: String) {
         return width
     }
 
-    fun getHeight(size: Float): Int = ceil(awt(size).getMaxCharBounds(frc).height / SAMPLE).toInt() + 1
+    fun getHeight(size: Float): Int = ceil(awt(size).getMaxCharBounds(frc).height / SAMPLE).toInt()
 
     fun getStringHeight(text: String, size: Float): Int {
         if (text.isEmpty()) return getHeight(size)
         val bounds = awt(size).createGlyphVector(frc, text).getPixelBounds(frc, 0f, 0f)
-        return ceil((bounds.height / SAMPLE).toDouble()).toInt() + 1
+        return ceil((bounds.height / SAMPLE).toDouble()).toInt()
     }
 
     fun getStringTopOffset(text: String, size: Float): Float {

@@ -5,6 +5,7 @@ import adreno.myauclickgui.feature.gui.GuiClickGui
 import adreno.myauclickgui.feature.managers.ChatManager
 import adreno.myauclickgui.feature.types.config.Config
 import adreno.myauclickgui.feature.types.module.Module
+import adreno.myauclickgui.feature.utils.RenderUtil
 import net.minecraftforge.common.MinecraftForge
 import net.minecraftforge.fml.client.registry.ClientRegistry
 import net.minecraftforge.fml.common.Mod
@@ -44,5 +45,6 @@ class MyauClickGui {
         ClientRegistry.registerKeyBinding(ClickGuiKeyBinding.keyGui)
         MinecraftForge.EVENT_BUS.register(ClickGuiKeyBinding())
         MinecraftForge.EVENT_BUS.register(chatManager)
+        RenderUtil.ensureStencil()
     }
 }

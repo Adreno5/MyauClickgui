@@ -261,13 +261,14 @@ void main() {
 
     @JvmStatic
     fun drawTextVCenter(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
-        return drawText(text, x, y + font.getStringTopOffset(text, size), font, size, color)
+        return drawText(text, x, y - getTextHeight(text, font, size) / 2f + font.getStringTopOffset(text, size), font, size, color)
     }
 
     @JvmStatic
     fun drawTextCenter(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
         val w = getTextWidth(text, font, size)
-        return drawText(text, x - w / 2f, y + font.getStringTopOffset(text, size), font, size, color)
+        val h = getTextHeight(text, font, size)
+        return drawText(text, x - w / 2f, y - h / 2f + font.getStringTopOffset(text, size), font, size, color)
     }
 
     @JvmStatic
@@ -345,7 +346,9 @@ void main() {
         if (texId == -1) return
         GlStateManager.enableBlend()
         GlStateManager.enableTexture2D()
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, texId)
+        GlStateManager.disableDepth()
+        GlStateManager.disableCull()
+        GlStateManager.bindTexture(texId)
         glColor(color)
         GL11.glBegin(GL11.GL_QUADS)
         GL11.glTexCoord2f(u, v)
@@ -378,7 +381,7 @@ void main() {
                 buf.put(((p ushr 24) and 0xFF).toByte())
             }
             buf.flip()
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, texId)
+            GlStateManager.bindTexture(texId)
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR)
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR)
             GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA, img.width, img.height, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buf)
@@ -477,7 +480,7 @@ void main() {
 
         GL11.glDisable(GL11.GL_SCISSOR_TEST)
         GL11.glDisable(GL11.GL_STENCIL_TEST)
-        GL11.glDisable(GL11.GL_CULL_FACE)
+        GlStateManager.disableCull()
 
         GlStateManager.matrixMode(GL11.GL_PROJECTION)
         GlStateManager.pushMatrix()
@@ -509,12 +512,12 @@ void main() {
         for (i in 0 until iterations) {
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo1.framebufferObject)
             ARBShaderObjects.glUniform2fARB(blurDirectionLoc, 1f, 0f)
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, src)
+            GlStateManager.bindTexture(src)
             drawFullscreenQuad(width.toFloat(), height.toFloat())
 
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo2.framebufferObject)
             ARBShaderObjects.glUniform2fARB(blurDirectionLoc, 0f, 1f)
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, fbo1.framebufferTexture)
+            GlStateManager.bindTexture(fbo1.framebufferTexture)
             drawFullscreenQuad(width.toFloat(), height.toFloat())
 
             src = fbo2.framebufferTexture
@@ -538,7 +541,7 @@ void main() {
             GlStateManager.loadIdentity()
             GlStateManager.translate(0f, 0f, -2000f)
             GL13.glActiveTexture(GL13.GL_TEXTURE0)
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, fbo2.framebufferTexture)
+            GlStateManager.bindTexture(fbo2.framebufferTexture)
             drawFullscreenQuad(screenW, screenH)
             GlStateManager.popMatrix()
         })
@@ -549,7 +552,7 @@ void main() {
         if (lighting) GlStateManager.enableLighting() else GlStateManager.disableLighting()
         if (scissor) GL11.glEnable(GL11.GL_SCISSOR_TEST)
         if (stencil) GL11.glEnable(GL11.GL_STENCIL_TEST)
-        if (cull) GL11.glEnable(GL11.GL_CULL_FACE)
+        if (cull) GlStateManager.enableCull()
         GlStateManager.color(1f, 1f, 1f, 1f)
     }
 
@@ -704,7 +707,8 @@ void main() {
         GlStateManager.scale(x, y, 1f)
     }
 
-    private fun ensureStencil() {
+    @JvmStatic
+    fun ensureStencil() {
         val fbo = mc.framebuffer
         if (!fbo.isStencilEnabled) {
             fbo.enableStencil()
@@ -723,8 +727,8 @@ void main() {
         GlStateManager.enableBlend()
         GlStateManager.disableTexture2D()
         GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
-        GL11.glDisable(GL11.GL_CULL_FACE)
-        GL11.glDisable(GL11.GL_DEPTH_TEST)
+        GlStateManager.disableCull()
+        GlStateManager.disableDepth()
         glColor(color)
     }
 
@@ -732,12 +736,14 @@ void main() {
         GlStateManager.enableBlend()
         GlStateManager.enableTexture2D()
         GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
+        GlStateManager.disableDepth()
+        GlStateManager.disableCull()
         glColor(color)
     }
 
     private fun drawGlyph(font: Font, c: Char, size: Float, x: Float, y: Float): Float {
         val glyph = font.getGlyph(c, size)
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, glyph.textureId)
+        GlStateManager.bindTexture(glyph.textureId)
         val top = y + glyph.offsetY
         GL11.glBegin(GL11.GL_QUADS)
         GL11.glTexCoord2f(0f, 0f)

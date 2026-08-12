@@ -7,4 +7,6 @@ class Module(
     var state: Boolean,
     var keyBinding: String?,
     val settings: ArrayList<Setting<*>> = ArrayList()
-)
+) {
+    var settingsLoaded: Boolean = false
+}

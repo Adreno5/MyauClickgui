@@ -23,8 +23,8 @@ plugins {
 }
 */
 version = "1.0"
-group= "com.yourname.modid" // http://maven.apache.org/guides/mini/guide-naming-conventions.html
-archivesBaseName = "modid"
+group= "adreno.myauclickgui" // http://maven.apache.org/guides/mini/guide-naming-conventions.html
+archivesBaseName = "Myau Click Gui"
 
 sourceCompatibility = '1.8'
 targetCompatibility = '1.8'
@@ -57,6 +57,7 @@ dependencies {
     //compile "some.group:artifact:version"
 
     compile 'org.jetbrains.kotlin:kotlin-stdlib:1.2.71'
+    compileOnly files('libs/mixin-0.7.11.jar')
       
     // real examples
     //compile 'com.mod-buildcraft:buildcraft:6.0.8:dev'  // adds buildcraft to the dev env
@@ -74,6 +75,20 @@ dependencies {
     // http://www.gradle.org/docs/current/userguide/artifact_dependencies_tutorial.html
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
 
+}
+
+jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from {
+        configurations.compile.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    exclude 'org/spongepowered/**'
+    manifest {
+        attributes 'MixinConfigs': 'mixins.myauclickgui.json',
+                'FMLCorePlugin': 'adreno.myauclickgui.core.MyauClickGuiPlugin',
+                'FMLCorePluginContainsFMLMod': 'true',
+                'ForceLoadAsMod': 'true'
+    }
 }
 
 processResources
@@ -99,6 +114,12 @@ task testParse(type: JavaExec) {
     dependsOn 'compileTestKotlin'
     classpath = files('build/classes/kotlin/test') + sourceSets.test.output + sourceSets.test.runtimeClasspath
     main = 'TestParseKt'
+}
+
+task testChatManager(type: JavaExec) {
+    dependsOn 'compileTestKotlin'
+    classpath = files('build/classes/kotlin/test') + sourceSets.test.output + sourceSets.test.runtimeClasspath
+    main = 'TestChatManagerKt'
 }
 
 runClient {

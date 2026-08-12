@@ -5,6 +5,7 @@ import net.minecraft.client.audio.PositionedSound
 import net.minecraft.client.audio.ISound
 import net.minecraft.client.audio.SoundEventAccessorComposite
 import net.minecraft.client.audio.SoundHandler
+import net.minecraft.util.ChatComponentText
 import net.minecraft.util.ResourceLocation
 
 object SoundUtil {
