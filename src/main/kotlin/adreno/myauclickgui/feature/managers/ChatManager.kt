@@ -11,6 +11,7 @@ import adreno.myauclickgui.feature.types.module.settings.NumberSetting
 import adreno.myauclickgui.feature.types.module.settings.Setting
 import adreno.myauclickgui.feature.utils.ChatUtil
 import net.minecraft.client.Minecraft
+import java.util.function.Consumer
 
 object ChatManager {
     private val mc = Minecraft.getMinecraft()
@@ -43,10 +44,11 @@ object ChatManager {
             .apply { isDaemon= true }.start()
     }
 
-    fun loadSettingsForModule(target: Module): ArrayList<Setting<*>> {
+    fun loadSettingsForModule(target: Module, objectStringCallback: ((String) -> Unit)? = null): ArrayList<Setting<*>> {
         val settings: ArrayList<Setting<*>> = ArrayList()
         val errors: MutableList<String> = mutableListOf()
         Thread({
+            mc.addScheduledTask { objectStringCallback?.let { it(target.name) } }
             val reply = chat.getMyauReply(".${target.name}")
 
             if (reply is ErrorReply) {
@@ -71,19 +73,41 @@ object ChatManager {
                 else if (valueString.toDoubleOrNull() != null) {
                     // Number Setting reply example (. + Module name + Setting name (+ value))
                     // [Myau] KillAura: angle-step is set to 90 (30-180)
+                    mc.addScheduledTask { objectStringCallback?.let { it(settingName) } }
                     val sReply = chat.getMyauReply(".${target.name} $settingName")
                     if (sReply is ErrorReply) {
                         errors.add("Failed to load setting $settingName: ${sReply.content}")
                         continue
                     }
-                    val lineOutput = (sReply as OutputReply).unformatted[0]
-                    val settingValue = lineOutput.substringAfter("is set to ").substringBefore(" (").toDouble()
-                    val settingMin = lineOutput.substringAfter(" (").substringBefore("-").toDouble()
-                    val settingMax = lineOutput.substringAfter("-").substringBefore(")").toDouble()
-                    NumberSetting(settingName, settingValue.toFloat(), Pair(settingMin.toFloat(), settingMax.toFloat()))
+                    val lineOutput = (sReply as OutputReply).unformatted.firstOrNull()
+                    var numberSetting: Triple<Float, Float, Float>? = null
+                    if (lineOutput != null) {
+                        val valueAndRange = lineOutput.substringAfter("is set to ", "")
+                        val rangeStart = valueAndRange.indexOf('(')
+                        val rangeEnd = valueAndRange.indexOf(')', rangeStart + 1)
+                        if (rangeStart in 1 until rangeEnd) {
+                            val value = valueAndRange.substring(0, rangeStart).trim().toFloatOrNull()
+                            if (value != null) {
+                                val range = valueAndRange.substring(rangeStart + 1, rangeEnd).trim()
+                                for (separator in 1 until range.length) {
+                                    if (range[separator] != '-') continue
+                                    val minimum = range.substring(0, separator).trim().toFloatOrNull() ?: continue
+                                    val maximum = range.substring(separator + 1).trim().toFloatOrNull() ?: continue
+                                    numberSetting = Triple(value, minimum, maximum)
+                                    break
+                                }
+                            }
+                        }
+                    }
+                    if (numberSetting == null) {
+                        errors.add("Unable to parse number setting $settingName: ${lineOutput ?: "empty reply"}")
+                        continue
+                    }
+                    NumberSetting(settingName, numberSetting.first, Pair(numberSetting.second, numberSetting.third))
                 } else {
                     // Mode Setting reply example (. + Module name + Setting name)
                     // [Myau] KillAura: mode is set to SINGLE (SINGLE, SWITCH)
+                    mc.addScheduledTask { objectStringCallback?.let { it(settingName) } }
                     val sReply = chat.getMyauReply(".${target.name} $settingName")
                     if (sReply is ErrorReply) {
                         errors.add("Failed to load setting $settingName: ${sReply.content}")
@@ -92,10 +116,12 @@ object ChatManager {
                     val lineOutput = (sReply as OutputReply).unformatted[0]
                     val settingValue = lineOutput.substringAfter("is set to ").substringBefore(" (")
                     val settingModes = lineOutput.substringAfter("(").substringBefore(")").split(", ")
-                    ModeSetting(settingName, settingValue, arrayListOf(settingModes))
+                    ModeSetting(settingName, settingValue, settingModes)
                 }
+                settings.add(setting)
             }
 
+            mc.addScheduledTask { objectStringCallback?.let { it("") } }
             mc.addScheduledTask {
                 errors.forEach { chat.err(it) }
                 chat.clog("Loaded ${settings.size} settings")

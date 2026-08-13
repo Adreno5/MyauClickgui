@@ -56,6 +56,7 @@ object GuiClickGui : GuiScreen() {
     private val leftColor: SmoothColor = SmoothColor(0.5f, 1)
     private var pendingClick: Int? = null
     private var pendingWheel: Int? = null
+    private var pendingRelease: Boolean = false
     private var cursorLastUpdate: Long = 0L
     private val cursorAlpha = EaseInOut(0.2f, 2)
     private val cursorX = EaseInOut(0.1f, 2);
@@ -65,6 +66,7 @@ object GuiClickGui : GuiScreen() {
     private val moduleOpenMap = LinkedHashMap<Module, EaseInOut>()
     private val switchXMap = LinkedHashMap<BooleanSetting, EaseInOut>()
     private val SliderXMap = LinkedHashMap<NumberSetting, EaseInOut>()
+    private val modeSettingExpend = LinkedHashMap<ModeSetting, EaseInOut>()
     private val r = Random()
 
     private var loadingModules = false
@@ -74,20 +76,27 @@ object GuiClickGui : GuiScreen() {
         leftColor.targetColor = 0x2A1F085C.toInt()
         placeAlpha.targetValue = 1f
 
-        // test
-//        for (i in 0 until 100) {
-//            val rSettings = ArrayList<Setting<*>>()
-//            val settingCount = r.nextInt() % 10 + 3
-//            for (j in 1 until settingCount) {
-//                val t = r.nextInt() % 3
-//                rSettings.add(if (t == 0) BooleanSetting("TestBooleanSetting $j", r.nextBoolean()) else if (t == 1) NumberSetting("TestNumberSetting $j", r.nextFloat() % 1f, Pair(0f, 1f)) else ModeSetting("TestModeSetting $j", "Option 2", listOf("Option 1", "Option 2", "Option 3")))
-//            }
-//            mod.modules.add(Module("TestModule $i", r.nextBoolean(), null, rSettings))
-//        }
+//        testModules()
+    }
+
+    private fun testModules() {
+        for (i in 0 until 100) {
+            val rSettings = ArrayList<Setting<*>>()
+            val settingCount = r.nextInt() % 20 + 10
+            for (j in 1 until settingCount) {
+                val t = r.nextInt() % 3
+                rSettings.add(if (t == 0) BooleanSetting("TestBooleanSetting $j", r.nextBoolean()) else if (t == 1) NumberSetting("TestNumberSetting $j", r.nextFloat() % 1f, Pair(0f, 1f)) else ModeSetting("TestModeSetting $j", "Option 2", listOf("Option 1", "Option 2", "Option 3")))
+            }
+            mod.modules.add(Module("TestModule $i", r.nextBoolean(), null, rSettings))
+        }
     }
 
     override fun mouseClicked(mouseX: Int, mouseY: Int, mouseButton: Int) {
         pendingClick = mouseButton
+    }
+
+    override fun mouseReleased(mouseX: Int, mouseY: Int, state: Int) {
+        pendingRelease = true
     }
 
     override fun handleMouseInput() {
@@ -97,12 +106,13 @@ object GuiClickGui : GuiScreen() {
 
     override fun drawScreen(mouseX: Int, mouseY: Int, partialTicks: Float) {
         preProcess()
-        render(mouseX, mouseY, pendingClick, pendingWheel)
+        render(mouseX, mouseY, pendingClick, pendingWheel, pendingRelease)
         pendingClick = null
         pendingWheel = null
+        pendingRelease = false
     }
 
-    fun render(mouseX: Int, mouseY: Int, mouseButton: Int?, wheel: Int?) {
+    fun render(mouseX: Int, mouseY: Int, mouseButton: Int?, wheel: Int?, release: Boolean) {
         val sr = ScaledResolution(mc)
         val sw = sr.scaledWidth
         val sh = sr.scaledHeight
@@ -117,12 +127,12 @@ object GuiClickGui : GuiScreen() {
         val x = (sw - lWidth - rWidth) / 2
         val y = (sh - sHeight) / 2
         val radius = (1 - panelExpand.currentValue) * 8f
-        val typingWidth = sw * (0.15f - 0.017f)
+        val typingWidth = sw * (0.15f - 0.025f)
         val typingX = x + sw * 0.025f
         val textWidths = FloatArray(searchText.length + 1)
         var textWidthAcc = 0f
         for (i in searchText.indices) {
-            textWidthAcc += RenderUtil.getTextWidth(searchText[i].toString(), Fonts.HarmonyOS, 14f)
+            textWidthAcc += RenderUtil.getTextWidth(searchText[i].toString(), Fonts.HarmonyOS, 6f)
             textWidths[i + 1] = textWidthAcc
         }
         panelExpand.targetValue = if (configuringModule == null) 0f else 1f;
@@ -169,9 +179,9 @@ object GuiClickGui : GuiScreen() {
         RenderUtil.drawRect(x, y + searchHeight - 1, lWidth * searchLine.currentValue, 2f, 0xFF93A8E4.toInt())
         RenderUtil.drawTexture(searchIcon, x + sw * 0.003f, y + sh * 0.007f, sh * 0.036f, sh * 0.036f)
         val searchTWidth = textWidths[searchCursor.coerceIn(0, searchText.length)]
-        val searchTHeight = RenderUtil.getTextHeight(searchText, Fonts.HarmonyOS, 14f).toFloat()
+        val searchTHeight = RenderUtil.getTextHeight(searchText, Fonts.HarmonyOS, 6f).toFloat()
         if (searchText.isEmpty() && !searchTyping)
-            RenderUtil.drawTextVCenter("Search...", x + sw * 0.025f, y + (searchHeight - searchTHeight) / 2f, Fonts.HarmonyOS, 14f, RenderUtil.getRGB(225, 225, 225, (225 * placeAlpha.currentValue).toInt()))
+            RenderUtil.drawTextVCenter("Search...", x + sw * 0.025f, y + searchHeight / 2f, Fonts.HarmonyOS, 6f, RenderUtil.getRGB(225, 225, 225, (225 * placeAlpha.currentValue).toInt()))
         cursorX.targetValue = searchTWidth + 0.7f
         if (searchText.isNotEmpty() || searchTyping)
             RenderUtil.withClipping({
@@ -187,48 +197,139 @@ object GuiClickGui : GuiScreen() {
                 }
                 RenderUtil.drawRect(typingX + cursorX.currentValue + searchScroll.currentValue, y + (searchHeight - searchTHeight) / 2f, 1f, searchTHeight,
                     RenderUtil.getRGB(245, 248, 255, (255 * cursorAlpha.currentValue).toInt()))
-                RenderUtil.drawTextVCenter(searchText, typingX + searchScroll.currentValue, y + (searchHeight - searchTHeight) / 2f, Fonts.HarmonyOS, 14f, -1)
+                RenderUtil.drawTextVCenter(searchText, typingX + searchScroll.currentValue, y + searchHeight / 2f, Fonts.HarmonyOS, 6f, -1)
             })
         if (loadingModules)
             RenderUtil.drawTextCenter("Loading modules...", x + lWidth / 2f,
-                y + searchHeight + (sHeight - searchHeight) / 2f, Fonts.HarmonyOS, 14f, -1)
-        else
+                y + searchHeight + (sHeight - searchHeight) / 2f, Fonts.HarmonyOS, 6f, -1)
+        else {
+            val hGap = sw * 0.03f
+            val vGap = sh * 0.009f
+            val cHeight = sh * 0.045f
+            var dy = y + searchHeight + 5 + moduleScroll.currentValue - cHeight - vGap
+            val listTop = y + searchHeight
+            val listBottom = y + sHeight
             RenderUtil.withClipping({
                 RenderUtil.drawRoundedRect(x, y + searchHeight, lWidth, sHeight - searchHeight, 0f, 0f, 8f, 8f, -1)
             }, {
-                val hGap = sw * 0.03f
-                val vGap = sh * 0.009f
-                val cHeight = sh * 0.045f
-                var dy = y + searchHeight + 5 + moduleScroll.currentValue - cHeight - vGap
-                val listTop = y + searchHeight
-                val listBottom = y + sHeight
                 for (module in mod.modules) {
                     val open = moduleOpenMap.getOrPut(module, { EaseInOut(0.3f, 3) })
                     open.targetValue = if (module.state) 1f else 0f
                     dy += cHeight + vGap
-                    if (dy + 25f < listTop - 100f || dy > listBottom + 100f) {
+                    if (dy + 25f < listTop - 10f || dy > listBottom + 10f) {
                         continue
                     }
                     val leftR = open.currentValue * cHeight / 2f
                     val rightR = cHeight / 2f - leftR
                     if (mouseButton != null) {
-                        val isIn = RenderUtil.isInside(x, y + searchHeight, lWidth, sHeight - searchHeight, 0f, 0f, 8f, 8f, mouseX.toFloat(), mouseY.toFloat()) &&
-                                RenderUtil.isInside(x + open.currentValue * hGap, dy, lWidth - hGap, 25f, leftR, rightR, rightR, leftR, mouseX.toFloat(), mouseY.toFloat())
+                        val isIn = RenderUtil.isInside(
+                            x,
+                            y + searchHeight,
+                            lWidth,
+                            sHeight - searchHeight,
+                            0f,
+                            0f,
+                            8f,
+                            8f,
+                            mouseX.toFloat(),
+                            mouseY.toFloat()
+                        ) &&
+                                RenderUtil.isInside(
+                                    x + open.currentValue * hGap,
+                                    dy,
+                                    lWidth - hGap,
+                                    25f,
+                                    leftR,
+                                    rightR,
+                                    rightR,
+                                    leftR,
+                                    mouseX.toFloat(),
+                                    mouseY.toFloat()
+                                )
                         if (mouseButton == 0 && isIn) {
                             chat!!.toggleModule(module)
                             module.state = !module.state
                         }
-                        if (mouseButton == 1 && isIn)
+                        if (mouseButton == 1 && isIn) {
                             configuringModule = module
+                            Thread({
+                                val settings = chat!!.loadSettingsForModule(module) { s -> loadingSettingsSuffix = s }
+                                configuringModule?.takeIf { it.settings.isEmpty() }?.also { it.settings = settings }
+                            }, "MyauClickGui-${module.name}SettingsGetter")
+                                .apply { isDaemon = true }.start()
+                        }
                     }
-                    RenderUtil.drawRoundedRect(x + open.currentValue * hGap, dy, lWidth - hGap, 25f,
-                        leftR, rightR, rightR, leftR, 0xA11D1072.toInt())
-                    RenderUtil.drawTextCenter(module.name, x + lWidth / 2f, dy + 12.5f, Fonts.HarmonyOS, 14f, -1)
+                    RenderUtil.drawRoundedRect(
+                        x + open.currentValue * hGap, dy, lWidth - hGap, 25f,
+                        leftR, rightR, rightR, leftR, 0xA11D1072.toInt()
+                    )
+                    RenderUtil.drawTextCenter(module.name, x + lWidth / 2f, dy + 12.5f, Fonts.HarmonyOS, 6f, -1)
                 }
             })
+            dy = y + searchHeight + 5 + moduleScroll.currentValue - cHeight - vGap
+            for (module in mod.modules) {
+                val open = moduleOpenMap.getOrPut(module, { EaseInOut(0.3f, 3) })
+                open.targetValue = if (module.state) 1f else 0f
+                dy += cHeight + vGap
+                if (dy + 25f < listTop - 10f || dy > listBottom + 10f) {
+                    continue
+                }
+                val leftR = open.currentValue * cHeight / 2f
+                val rightR = cHeight / 2f - leftR
+                RenderUtil.withClipping({
+                    RenderUtil.drawRoundedRect(x, y + searchHeight, lWidth, sHeight - searchHeight, 0f, 0f, 8f, 8f, -1)
+                }, {
+                    RenderUtil.withClipping({
+                        RenderUtil.drawRoundedRect(
+                            x + open.currentValue * hGap, dy, lWidth - hGap, 25f,
+                            leftR, rightR, rightR, leftR, -1
+                        )
+                    }, {
+                        RenderUtil.drawHorizontalGradientRect(x, dy, hGap, 25f, 0xC1B22949.toInt(), 0x00000000.toInt())
+                        RenderUtil.drawHorizontalGradientRect(x + lWidth - hGap, dy, hGap, 25f, 0x00000000.toInt(), 0xC1109B3E.toInt())
+                    })
+                })
+            }
+        }
         if (mouseButton == 0 && !RenderUtil.isInside(x, y, lWidth + rWidth, sHeight, 8f, mouseX.toFloat(), mouseY.toFloat())) {
             configuringModule = null
         }
+        RenderUtil.withClipping({
+            RenderUtil.drawRoundedRect(x + lWidth, y, rWidth, sHeight, 8f, 0f, 0f, 8f, -1)
+        }, {
+            if (loadingSettingsSuffix.isNotEmpty()) {
+                RenderUtil.drawTextCenter(
+                    "Loading settings...  ($loadingSettingsSuffix)",
+                    x + lWidth + rWidth / 2f,
+                    y + sHeight / 2f,
+                    Fonts.HarmonyOS,
+                    8.4f,
+                    -1
+                )
+                configurationScroll.targetValue = 0f
+            }
+            else {
+                var sy = y + 10f + configurationScroll.currentValue
+                for (setting in configuringModule?.settings ?: return@withClipping) {
+                    val settingHeight = when (setting) {
+                        is BooleanSetting -> 25f
+                        is ModeSetting -> {
+                            val modeExpend = modeSettingExpend.getOrPut(setting, { EaseInOut(0.3f, 3) })
+                            25f + modeExpend.currentValue * 18f * setting.modes.size
+                        }
+                        is NumberSetting -> 25f
+                        else -> 25f
+                    }
+                    sy += settingHeight
+                    if (sy + settingHeight < y + searchHeight - 10f || sy > y + sHeight + 10f)
+                        continue
+                    when (setting) {
+                        is NumberSetting, is BooleanSetting, is ModeSetting -> {
+                            RenderUtil.drawTextVCenter(setting.name, x + lWidth + 10f, sy + 12.5f, Fonts.HarmonyOS, 6f, -1)
+                        }
+                    }
+            } }
+        })
         GlStateManager.color(1f, 1f, 1f, 1f)
         GlStateManager.enableTexture2D()
         GlStateManager.disableBlend()

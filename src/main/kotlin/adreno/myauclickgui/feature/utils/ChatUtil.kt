@@ -35,6 +35,7 @@ object ChatUtil {
     )
 
     fun getMyauReply(prompt: String): MyauReply {
+        clog(prompt)
         check(!mc.isCallingFromMinecraftThread) {
             "getMyauReply must not be called from the Minecraft main thread"
         }
@@ -65,7 +66,7 @@ object ChatUtil {
 
         scheduler.schedule({
             mc.addScheduledTask { finishCollect(prompt, future) }
-        }, 120L, TimeUnit.MILLISECONDS)
+        }, 90L, TimeUnit.MILLISECONDS)
     }
 
     private fun finishCollect(prompt: String, future: CompletableFuture<MyauReply>) {

@@ -22,6 +22,8 @@ import javax.imageio.ImageIO
 object RenderUtil {
     private val mc = Minecraft.getMinecraft()
     private val scissorStack: Deque<IntArray> = ArrayDeque()
+    private var stencilDepth = 0
+    private const val MAX_STENCIL_DEPTH = 8
     private val textureCache = HashMap<ResourceLocation, Int>()
     private var blurFbo: Framebuffer? = null
     private var blurFbo2: Framebuffer? = null
@@ -247,8 +249,9 @@ void main() {
     @JvmStatic
     fun drawText(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
         setGlyphState(color)
+        val scaledSize = scaledSize(size)
         var dx = x
-        for (c in text) dx += drawGlyph(font, c, size, dx, y)
+        for (c in text) dx += drawGlyph(font, c, scaledSize, dx, y)
         restoreGLState()
         return Math.round(dx)
     }
@@ -261,14 +264,13 @@ void main() {
 
     @JvmStatic
     fun drawTextVCenter(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
-        return drawText(text, x, y - getTextHeight(text, font, size) / 2f + font.getStringTopOffset(text, size), font, size, color)
+        return drawText(text, x, centeredTextBaseline(y, font, size), font, size, color)
     }
 
     @JvmStatic
     fun drawTextCenter(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
         val w = getTextWidth(text, font, size)
-        val h = getTextHeight(text, font, size)
-        return drawText(text, x - w / 2f, y - h / 2f + font.getStringTopOffset(text, size), font, size, color)
+        return drawText(text, x - w / 2f, centeredTextBaseline(y, font, size), font, size, color)
     }
 
     @JvmStatic
@@ -305,19 +307,19 @@ void main() {
     }
 
     @JvmStatic
-    fun getStringWidth(text: String, font: Font, size: Float): Float = font.getStringWidth(text, size)
+    fun getStringWidth(text: String, font: Font, size: Float): Float = font.getStringWidth(text, size * getScale())
 
     @JvmStatic
-    fun getFontHeight(font: Font, size: Float): Int = font.getHeight(size)
+    fun getFontHeight(font: Font, size: Float): Int = font.getHeight(size * getScale())
 
     @JvmStatic
-    fun getTextWidth(text: String, font: Font, size: Float): Float = font.getStringWidth(text, size)
+    fun getTextWidth(text: String, font: Font, size: Float): Float = font.getStringWidth(text, size * getScale())
 
     @JvmStatic
-    fun getTextHeight(text: String, font: Font, size: Float): Int = font.getStringHeight(text, size)
+    fun getTextHeight(text: String, font: Font, size: Float): Int = font.getStringHeight(text, size * getScale())
 
     @JvmStatic
-    fun getTextHeight(font: Font, size: Float): Int = font.getHeight(size)
+    fun getTextHeight(font: Font, size: Float): Int = font.getHeight(size * getScale())
 
     @JvmStatic
     fun getStringWidth(text: String): Int {
@@ -399,26 +401,56 @@ void main() {
         val scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
         if (scissor) GL11.glDisable(GL11.GL_SCISSOR_TEST)
 
+        if (stencilDepth >= MAX_STENCIL_DEPTH) {
+            if (scissor) GL11.glEnable(GL11.GL_SCISSOR_TEST)
+            throw IllegalStateException("withClipping supports up to $MAX_STENCIL_DEPTH nested levels")
+        }
+
+        val depth = stencilDepth++
+        val stencilBit = 1 shl depth
+        val parentMask = stencilBit - 1
+        val clippingMask = parentMask or stencilBit
+
         GL11.glEnable(GL11.GL_STENCIL_TEST)
-        GL11.glClearStencil(0)
-        GL11.glStencilFunc(GL11.GL_ALWAYS, 1, 0xFF)
-        GL11.glStencilOp(GL11.GL_REPLACE, GL11.GL_REPLACE, GL11.GL_REPLACE)
+        if (depth == 0) {
+            GL11.glStencilMask(0xFF)
+            GL11.glClearStencil(0)
+            GL11.glClear(GL11.GL_STENCIL_BUFFER_BIT)
+        } else {
+            // The bit is reused by sibling clips, so clear only this level.
+            GL11.glStencilMask(stencilBit)
+            GL11.glClearStencil(0)
+            GL11.glClear(GL11.GL_STENCIL_BUFFER_BIT)
+        }
+
+        GL11.glStencilMask(stencilBit)
+        GL11.glStencilFunc(GL11.GL_EQUAL, clippingMask, parentMask)
+        GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_REPLACE, GL11.GL_REPLACE)
         GlStateManager.colorMask(false, false, false, false)
-        GL11.glClear(GL11.GL_STENCIL_BUFFER_BIT)
 
-        clip()
+        try {
+            clip()
 
-        GlStateManager.colorMask(true, true, true, true)
-        GL11.glStencilFunc(GL11.GL_EQUAL, 1, 0xFF)
-        GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
+            GlStateManager.colorMask(true, true, true, true)
+            GL11.glStencilMask(0x00)
+            GL11.glStencilFunc(GL11.GL_EQUAL, clippingMask, clippingMask)
+            GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
 
-        render()
-
-        GL11.glStencilFunc(GL11.GL_ALWAYS, 0, 0xFF)
-        GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
-        GL11.glDisable(GL11.GL_STENCIL_TEST)
-
-        if (scissor) GL11.glEnable(GL11.GL_SCISSOR_TEST)
+            render()
+        } finally {
+            GlStateManager.colorMask(true, true, true, true)
+            stencilDepth--
+            if (stencilDepth == 0) {
+                GL11.glStencilMask(0xFF)
+                GL11.glDisable(GL11.GL_STENCIL_TEST)
+            } else {
+                val restoredMask = (1 shl stencilDepth) - 1
+                GL11.glStencilMask(0x00)
+                GL11.glStencilFunc(GL11.GL_EQUAL, restoredMask, restoredMask)
+                GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
+            }
+            if (scissor) GL11.glEnable(GL11.GL_SCISSOR_TEST) else GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        }
     }
 
     @JvmStatic
@@ -723,6 +755,12 @@ void main() {
         }
     }
 
+    private fun scaledSize(size: Float): Float = size * getScale()
+
+    private fun centeredTextBaseline(y: Float, font: Font, size: Float): Float {
+        return y + font.getCenterBaselineOffset(scaledSize(size))
+    }
+
     private fun setGLState(color: Int) {
         GlStateManager.enableBlend()
         GlStateManager.disableTexture2D()
@@ -783,6 +821,7 @@ void main() {
         GlStateManager.enableBlend()
         GlStateManager.disableTexture2D()
         GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
+        GL11.glShadeModel(GL11.GL_SMOOTH)
     }
 
     private fun restoreGLState() {

@@ -88,6 +88,11 @@ class Font(val name: String) {
 
     fun getHeight(size: Float): Int = ceil(awt(size).getMaxCharBounds(frc).height / SAMPLE).toInt()
 
+    fun getCenterBaselineOffset(size: Float): Float {
+        val metrics = awt(size).getLineMetrics("Ag", frc)
+        return (metrics.ascent - metrics.descent) / (2f * SAMPLE)
+    }
+
     fun getStringHeight(text: String, size: Float): Int {
         if (text.isEmpty()) return getHeight(size)
         val bounds = awt(size).createGlyphVector(frc, text).getPixelBounds(frc, 0f, 0f)
