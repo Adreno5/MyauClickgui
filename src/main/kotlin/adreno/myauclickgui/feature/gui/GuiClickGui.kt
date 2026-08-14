@@ -64,6 +64,8 @@ object GuiClickGui : GuiScreen() {
     private val cursorX = EaseInOut(0.1f, 2);
     private val placeAlpha = EaseOut(0.3f, 1)
     private val shownModules: MutableList<Module> = mutableListOf()
+    private var rankedSearchQuery = ""
+    private var rankedModuleFingerprint = 0
     private val searchIcon = ResourceLocation("myauclickgui", "images/search.png")
     private val moduleOpenMap = LinkedHashMap<Module, EaseInOut>()
     private val switchXMap = LinkedHashMap<BooleanSetting, EaseInOut>()
@@ -71,7 +73,9 @@ object GuiClickGui : GuiScreen() {
     private val sliderXMap = LinkedHashMap<NumberSetting, EaseInOut>()
     private val modeSettingExpend = LinkedHashMap<ModeSetting, EaseInOut>()
     private val modeSettingVLine = LinkedHashMap<ModeSetting, EaseOut>()
-    private var expandedMode: ModeSetting? = null
+    private val colorSettingExpend = LinkedHashMap<ColorSetting, EaseInOut>()
+    private val expandedModes = HashSet<ModeSetting>()
+    private val expandedColors = HashSet<ColorSetting>()
     private var draggingModule: Module? = null
     private var draggingNumber: NumberSetting? = null
     private var draggingColor: ColorSetting? = null
@@ -247,7 +251,8 @@ object GuiClickGui : GuiScreen() {
             RenderUtil.withClipping({
                 RenderUtil.drawRoundedRect(x, y + searchHeight, lWidth, sHeight - searchHeight, 0f, 0f, 8f, 8f, -1)
             }, {
-                for (module in mod.modules) {
+                updateSearchRanking()
+                for (module in shownModules) {
                     val open = moduleOpenMap.getOrPut(module, { EaseInOut(0.3f, 3) })
                     open.targetValue = if (module.state) 1f else 0f
                     dy += cHeight + vGap
@@ -287,7 +292,6 @@ object GuiClickGui : GuiScreen() {
                         }
                         if (mouseButton == 1 && isIn) {
                             configuringModule = module
-                            expandedMode = null
                             draggingModule = null
                             draggingNumber = null
                             draggingColor = null
@@ -309,7 +313,7 @@ object GuiClickGui : GuiScreen() {
                 }
             })
             dy = y + searchHeight + 5 + moduleScroll.currentValue - cHeight - vGap
-            for (module in mod.modules) {
+            for (module in shownModules) {
                 val open = moduleOpenMap.getOrPut(module, { EaseInOut(0.3f, 3) })
                 open.targetValue = if (module.state) 1f else 0f
                 dy += cHeight + vGap
@@ -386,21 +390,25 @@ object GuiClickGui : GuiScreen() {
                     val modeExpend = modeSettingExpend.getOrPut(setting, { EaseInOut(0.3f, 3) })
                     val vLine = modeSettingVLine.getOrPut(setting, {
                         EaseOut(0.3f, 3).apply {
-                            currentValue = 25f + setting.modes.indexOf(setting.value).coerceAtLeast(0) * 18f
+                            currentValue = 25f + setting.modes.indexOf(setting.value).coerceAtLeast(0) * 20f
                         }
                     })
                     val progress = modeExpend.currentValue
-                    val totalExpandH = setting.modes.size * 18f
+                    val totalExpandH = setting.modes.size * 20f
                     val modeX = sx + 12f
                     val rowRight = sx + rowWidth
 
-                    if (mouseButton == 1 && inPanel && RenderUtil.isInside(sx, sy, rowWidth, 25f, mx, my)) {
-                        expandedMode = if (expandedMode == setting) null else setting
+                    if (mouseButton != null && inPanel && RenderUtil.isInside(sx, sy, rowWidth, 25f, mx, my)) {
+                        if (expandedModes.contains(setting)) {
+                            expandedModes.remove(setting)
+                        } else {
+                            expandedModes.add(setting)
+                        }
                     }
                     if (mouseButton == 0 && progress > 0.5f && inPanel) {
                         for ((index, mode) in setting.modes.withIndex()) {
-                            val rowY = sy + 25f + index * 18f
-                            if (RenderUtil.isInside(modeX, rowY, rowRight - modeX, 18f, mx, my)) {
+                            val rowY = sy + 25f + index * 20f
+                            if (RenderUtil.isInside(modeX, rowY, rowRight - modeX, 20f, mx, my)) {
                                 if (mode != setting.value) {
                                     setting.value = mode
                                     ChatManager.setValue(module, setting, mode)
@@ -410,8 +418,8 @@ object GuiClickGui : GuiScreen() {
                         }
                     }
                     val selectedIndex = setting.modes.indexOf(setting.value).coerceAtLeast(0)
-                    modeExpend.targetValue = if (expandedMode == setting) 1f else 0f
-                    vLine.targetValue = 25f + selectedIndex * 18f
+                    modeExpend.targetValue = if (expandedModes.contains(setting)) 1f else 0f
+                    vLine.targetValue = 25f + selectedIndex * 20f
 
                     RenderUtil.drawTextVCenter(setting.name, sx, sy + 12.5f, Fonts.HarmonyOS, 6f, -1)
                     RenderUtil.drawTextVCenter(
@@ -424,14 +432,14 @@ object GuiClickGui : GuiScreen() {
                             RenderUtil.drawRect(sx, sy + 25f, rowWidth, progress * totalExpandH, -1)
                         }, {
                             for ((index, mode) in setting.modes.withIndex()) {
-                                val rowY = sy + 25f + index * 18f
-                                RenderUtil.drawRect(modeX, rowY, rowRight - modeX, 18f, switchOffColor)
+                                val rowY = sy + 25f + index * 20f
+                                RenderUtil.drawRect(modeX, rowY, rowRight - modeX, 20f, switchOffColor)
                                 RenderUtil.drawTextVCenter(
                                     mode, modeX + 8f, rowY + 9f, Fonts.HarmonyOS, 5f,
                                     if (mode == setting.value) -1 else 0x9FFFFFFF.toInt()
                                 )
                             }
-                            RenderUtil.drawRect(modeX, sy + vLine.currentValue, 1f, 18f, themeColor)
+                            RenderUtil.drawRect(modeX, sy + vLine.currentValue, 1f, 20f, themeColor)
                             RenderUtil.drawRect(
                                 modeX, sy + 25f + totalExpandH - 1f, rowRight - modeX, 1f,
                                 RenderUtil.alpha(themeColor, progress)
@@ -487,49 +495,56 @@ object GuiClickGui : GuiScreen() {
                 }
 
                 fun renderColorSetting(setting: ColorSetting, sy: Float) {
+                    val colorExpend = colorSettingExpend.getOrPut(setting) { EaseInOut(0.3f, 3) }
+                    colorExpend.targetValue = if (expandedColors.contains(setting)) 1f else 0f
+                    val expandProgress = colorExpend.currentValue
+
                     val blockX = sx + rowWidth - 10f
                     val blockY = sy + (25f - 10f) / 2f
                     val displayColor = if (draggingColor == setting) colorDragValue else setting.value
                     val (h, s, v) = if (draggingColor == setting)
                         Triple(colorDragH, colorDragS, colorDragV) else rgbToHsv(setting.value)
 
-                    val sqSize = 60f
+                    val sqSize = 150f
                     val barW = 8f
                     val pickerX = sx + (rowWidth - sqSize - barW - 8f) / 2f
-                    val pickerY = sy + 25f + (100f - sqSize) / 2f
-                    val sqX = pickerX
-                    val sqY = pickerY
+                    val pickerY = sy + 25f
                     val barX = pickerX + sqSize + 8f
-                    val barY = pickerY
 
-                    if (mouseButton == 0 && inPanel) {
-                        if (RenderUtil.isInside(sqX, sqY, sqSize, sqSize, mx, my)) {
+                    if (mouseButton != null && inPanel && RenderUtil.isInside(sx, sy, rowWidth, 25f, mx, my)) {
+                        if (expandedColors.contains(setting)) expandedColors.remove(setting)
+                        else expandedColors.add(setting)
+                    }
+
+                    val clipH = expandProgress * 150f
+                    if (expandProgress > 0f && mouseButton == 0 && inPanel) {
+                        if (RenderUtil.isInside(pickerX, pickerY, sqSize, clipH.coerceAtMost(sqSize), mx, my)) {
                             draggingModule = module
                             draggingColor = setting
                             colorDragMode = ColorDragMode.SV
                             colorDragH = rgbToHsv(setting.value).first
-                            colorDragS = ((mx - sqX) / sqSize).coerceIn(0f, 1f)
-                            colorDragV = (1f - (my - sqY) / sqSize).coerceIn(0f, 1f)
+                            colorDragS = ((mx - pickerX) / sqSize).coerceIn(0f, 1f)
+                            colorDragV = (1f - (my - pickerY) / sqSize).coerceIn(0f, 1f)
                             colorDragValue = hsvToRgb(colorDragH, colorDragS, colorDragV)
-                        } else if (RenderUtil.isInside(barX, barY, barW, sqSize, mx, my)) {
+                        } else if (RenderUtil.isInside(barX, pickerY, barW, clipH.coerceAtMost(sqSize), mx, my)) {
                             draggingModule = module
                             draggingColor = setting
                             colorDragMode = ColorDragMode.HUE
                             val current = rgbToHsv(setting.value)
                             colorDragS = current.second
                             colorDragV = current.third
-                            colorDragH = ((my - barY) / sqSize * 360f).coerceIn(0f, 360f)
+                            colorDragH = ((my - pickerY) / sqSize * 360f).coerceIn(0f, 360f)
                             colorDragValue = hsvToRgb(colorDragH, colorDragS, colorDragV)
                         }
                     }
                     if (draggingColor == setting && Mouse.isButtonDown(0)) {
                         when (colorDragMode) {
                             ColorDragMode.SV -> {
-                                colorDragS = ((mx - sqX) / sqSize).coerceIn(0f, 1f)
-                                colorDragV = (1f - (my - sqY) / sqSize).coerceIn(0f, 1f)
+                                colorDragS = ((mx - pickerX) / sqSize).coerceIn(0f, 1f)
+                                colorDragV = (1f - (my - pickerY) / sqSize).coerceIn(0f, 1f)
                             }
                             ColorDragMode.HUE -> {
-                                colorDragH = ((my - barY) / sqSize * 360f).coerceIn(0f, 360f)
+                                colorDragH = ((my - pickerY) / sqSize * 360f).coerceIn(0f, 360f)
                             }
                             else -> {}
                         }
@@ -544,22 +559,30 @@ object GuiClickGui : GuiScreen() {
                     )
                     RenderUtil.drawRoundedRect(blockX, blockY, 10f, 10f, 2f, displayColor)
 
-                    RenderUtil.drawHorizontalGradientRect(sqX, sqY, sqSize, sqSize, sliderColor, hsvToRgb(h, 1f, 1f))
-                    RenderUtil.drawVerticalGradientRect(sqX, sqY, sqSize, sqSize, 0x00000000, 0xFF000000.toInt())
-                    val markerX = sqX + s * sqSize
-                    val markerY = sqY + (1f - v) * sqSize
-                    RenderUtil.drawOutlinedRect(
-                        markerX - 3.5f, markerY - 3.5f, 7f, 7f, 1f,
-                        if (v > 0.6f) 0xFF000000.toInt() else sliderColor
-                    )
-                    for (i in 0 until 6) {
-                        RenderUtil.drawVerticalGradientRect(
-                            barX, barY + i * 10f, barW, 10f,
-                            hsvToRgb(i * 60f, 1f, 1f), hsvToRgb((i + 1) * 60f, 1f, 1f)
-                        )
+                    if (clipH > 0f) {
+                        RenderUtil.withClipping({
+                            RenderUtil.drawRect(pickerX, pickerY, sqSize + barW + 8f, clipH, -1)
+                        }, {
+                            RenderUtil.drawHorizontalGradientRect(pickerX,
+                                pickerY, sqSize, sqSize, sliderColor, hsvToRgb(h, 1f, 1f))
+                            RenderUtil.drawVerticalGradientRect(pickerX, pickerY, sqSize, sqSize, 0x00000000, 0xFF000000.toInt())
+                            val markerX = pickerX + s * sqSize
+                            val markerY = pickerY + (1f - v) * sqSize
+                            RenderUtil.drawOutlinedRect(
+                                markerX - 3.5f, markerY - 3.5f, 7f, 7f, 1f,
+                                if (v > 0.6f) 0xFF000000.toInt() else sliderColor
+                            )
+                            val segH = sqSize / 6f
+                            for (i in 0 until 6) {
+                                RenderUtil.drawVerticalGradientRect(
+                                    barX, pickerY + i * segH, barW, segH,
+                                    hsvToRgb(i * 60f, 1f, 1f), hsvToRgb((i + 1) * 60f, 1f, 1f)
+                                )
+                            }
+                            val hueY = (pickerY + h / 360f * sqSize).coerceIn(pickerY + 1f, pickerY + sqSize - 1f)
+                            RenderUtil.drawRect(barX - 2f, hueY - 1f, barW + 4f, 2f, sliderColor)
+                        })
                     }
-                    val hueY = (barY + h / 360f * sqSize).coerceIn(barY + 1f, barY + sqSize - 1f)
-                    RenderUtil.drawRect(barX - 2f, hueY - 1f, barW + 4f, 2f, sliderColor)
                 }
 
                 var sy = y + 10f + configurationScroll.currentValue
@@ -568,10 +591,13 @@ object GuiClickGui : GuiScreen() {
                         is BooleanSetting -> 25f
                         is ModeSetting -> {
                             val modeExpend = modeSettingExpend.getOrPut(setting, { EaseInOut(0.3f, 3) })
-                            25f + modeExpend.currentValue * 18f * setting.modes.size
+                            25f + modeExpend.currentValue * 20f * setting.modes.size
                         }
                         is NumberSetting -> 25f
-                        is ColorSetting -> 125f
+                        is ColorSetting -> {
+                            val colorExpend = colorSettingExpend.getOrPut(setting, { EaseInOut(0.3f, 3) })
+                            25f + colorExpend.currentValue * 150f
+                        }
                         else -> 25f
                     }
                     if (sy + settingHeight < y + searchHeight - 10f || sy > y + sHeight + 10f) {
@@ -747,6 +773,152 @@ object GuiClickGui : GuiScreen() {
         return Triple(h, s, max)
     }
 
+    private data class SearchCandidate(val module: Module, val score: Float, val order: Int)
+
+    private fun updateSearchRanking() {
+        val query = searchText.trim().lowercase(java.util.Locale.ROOT)
+        var fingerprint = mod.modules.size
+        for (module in mod.modules) fingerprint = fingerprint * 31 + module.name.hashCode()
+        if (query == rankedSearchQuery && fingerprint == rankedModuleFingerprint && shownModules.size == mod.modules.size) return
+
+        rankedSearchQuery = query
+        rankedModuleFingerprint = fingerprint
+        shownModules.clear()
+        if (query.isEmpty()) {
+            shownModules.addAll(mod.modules)
+            return
+        }
+
+        val compactQuery = query.filter { it.isLetterOrDigit() }
+        val candidates = mod.modules.mapIndexed { index, module ->
+            SearchCandidate(module, searchConfidence(module.name, query, compactQuery), index)
+        }
+        candidates.sortedWith(compareByDescending<SearchCandidate> { it.score }.thenBy { it.order })
+            .forEach { shownModules.add(it.module) }
+    }
+
+    private fun searchConfidence(rawName: String, query: String, compactQuery: String): Float {
+        val name = rawName.lowercase(java.util.Locale.ROOT)
+        val compactName = name.filter { it.isLetterOrDigit() }
+        if (compactQuery.isEmpty()) return 0f
+
+        var score = 0f
+        if (name == query) score += 1_000_000f
+        if (name.startsWith(query)) score += 220_000f + query.length * 500f
+
+        val lengthDistance = abs(compactName.length - compactQuery.length).toFloat()
+        val lengthSimilarity = 1f - (lengthDistance / maxOf(compactName.length, compactQuery.length, 1)).coerceIn(0f, 1f)
+        score += lengthSimilarity * 18_000f
+
+        val acronym = buildAcronym(rawName)
+        if (acronym == compactQuery) score += 160_000f
+        else if (acronym.startsWith(compactQuery)) score += 45_000f + compactQuery.length * 300f
+        else if (isSubsequence(compactQuery, acronym)) score += 18_000f
+
+        val contiguous = longestCommonSubstring(compactName, compactQuery)
+        score += contiguous.toFloat() / compactQuery.length * 42_000f
+
+        val ordered = orderedCoverage(compactName, compactQuery)
+        score += ordered * 26_000f
+
+        val distribution = characterDistribution(compactName, compactQuery)
+        score += distribution * 24_000f
+
+        score += boundaryCoverage(rawName, compactQuery) * 16_000f
+        score += (1f - levenshteinDistance(compactName, compactQuery).toFloat() /
+            maxOf(compactName.length, compactQuery.length, 1)) * 12_000f
+        return score
+    }
+
+    private fun buildAcronym(value: String): String {
+        val result = StringBuilder()
+        var boundary = true
+        for (index in value.indices) {
+            val c = value[index]
+            if (!c.isLetterOrDigit()) {
+                boundary = true
+                continue
+            }
+            val uppercaseBoundary = index > 0 && c.isUpperCase() && value[index - 1].isLowerCase()
+            if (boundary || uppercaseBoundary) result.append(c.lowercaseChar())
+            boundary = false
+        }
+        return result.toString()
+    }
+
+    private fun isSubsequence(needle: String, haystack: String): Boolean {
+        var cursor = 0
+        for (c in haystack) if (cursor < needle.length && c == needle[cursor]) cursor++
+        return cursor == needle.length
+    }
+
+    private fun longestCommonSubstring(first: String, second: String): Int {
+        if (first.isEmpty() || second.isEmpty()) return 0
+        var previous = IntArray(second.length + 1)
+        var best = 0
+        for (a in first) {
+            val current = IntArray(second.length + 1)
+            for (j in second.indices) {
+                if (a == second[j]) {
+                    current[j + 1] = previous[j] + 1
+                    best = maxOf(best, current[j + 1])
+                }
+            }
+            previous = current
+        }
+        return best
+    }
+
+    private fun orderedCoverage(name: String, query: String): Float {
+        var cursor = 0
+        var matched = 0
+        for (c in query) {
+            while (cursor < name.length && name[cursor] != c) cursor++
+            if (cursor == name.length) break
+            matched++
+            cursor++
+        }
+        return matched.toFloat() / query.length
+    }
+
+    private fun characterDistribution(name: String, query: String): Float {
+        val available = name.groupingBy { it }.eachCount().toMutableMap()
+        var matched = 0
+        for (c in query) {
+            val count = available[c] ?: 0
+            if (count > 0) {
+                available[c] = count - 1
+                matched++
+            }
+        }
+        return matched.toFloat() / query.length
+    }
+
+    private fun boundaryCoverage(rawName: String, query: String): Float {
+        val boundaries = buildAcronym(rawName)
+        if (boundaries.isEmpty()) return 0f
+        var matched = 0
+        for (c in query) if (boundaries.indexOf(c) >= 0) matched++
+        return matched.toFloat() / query.length
+    }
+
+    private fun levenshteinDistance(first: String, second: String): Int {
+        var previous = IntArray(second.length + 1) { it }
+        for (i in first.indices) {
+            val current = IntArray(second.length + 1)
+            current[0] = i + 1
+            for (j in second.indices) {
+                current[j + 1] = minOf(
+                    current[j] + 1,
+                    previous[j + 1] + 1,
+                    previous[j] + if (first[i] == second[j]) 0 else 1
+                )
+            }
+            previous = current
+        }
+        return previous[second.length]
+    }
+
     private fun charIndexAt(relX: Float, widths: FloatArray): Int {
         var best = 0
         var bestDist = Float.MAX_VALUE
@@ -763,7 +935,6 @@ object GuiClickGui : GuiScreen() {
     override fun onGuiClosed() {
         super.onGuiClosed()
         searchTyping = false
-        expandedMode = null
         draggingNumber = null
         draggingColor = null
         colorDragMode = null
