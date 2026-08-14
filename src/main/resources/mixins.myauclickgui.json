@@ -2,8 +2,10 @@
   "required": true,
   "minVersion": "0.7.11",
   "package": "adreno.myauclickgui.mixin",
+  "refmap": "mixins.myauclickgui.refmap.json",
   "compatibilityLevel": "JAVA_8",
-  "mixins": [
+  "mixins": [],
+  "client": [
     "EntityPlayerSPMixin"
   ]
 }

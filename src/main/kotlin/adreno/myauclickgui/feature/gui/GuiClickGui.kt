@@ -1,9 +1,11 @@
 package adreno.myauclickgui.feature.gui
 
 import adreno.myauclickgui.MyauClickGui
+import adreno.myauclickgui.feature.managers.ChatManager
 import adreno.myauclickgui.feature.types.fonts.Fonts
 import adreno.myauclickgui.feature.types.module.Module
 import adreno.myauclickgui.feature.types.module.settings.BooleanSetting
+import adreno.myauclickgui.feature.types.module.settings.ColorSetting
 import adreno.myauclickgui.feature.types.module.settings.ModeSetting
 import adreno.myauclickgui.feature.types.module.settings.NumberSetting
 import adreno.myauclickgui.feature.types.module.settings.Setting
@@ -65,9 +67,32 @@ object GuiClickGui : GuiScreen() {
     private val searchIcon = ResourceLocation("myauclickgui", "images/search.png")
     private val moduleOpenMap = LinkedHashMap<Module, EaseInOut>()
     private val switchXMap = LinkedHashMap<BooleanSetting, EaseInOut>()
-    private val SliderXMap = LinkedHashMap<NumberSetting, EaseInOut>()
+    private val switchBgMap = LinkedHashMap<BooleanSetting, SmoothColor>()
+    private val sliderXMap = LinkedHashMap<NumberSetting, EaseInOut>()
     private val modeSettingExpend = LinkedHashMap<ModeSetting, EaseInOut>()
+    private val modeSettingVLine = LinkedHashMap<ModeSetting, EaseOut>()
+    private var expandedMode: ModeSetting? = null
+    private var draggingModule: Module? = null
+    private var draggingNumber: NumberSetting? = null
+    private var draggingColor: ColorSetting? = null
+    private var colorDragMode: ColorDragMode? = null
+    private var colorDragH = 0f
+    private var colorDragS = 0f
+    private var colorDragV = 0f
+    private var colorDragValue = 0xFFFFFFFF.toInt()
+    private var dragTrackX = 0f
+    private var dragTrackW = 0f
+    private var lastLogCount = 0
+    private val logOffset = EaseInOut(0.2f, 3)
     private val r = Random()
+
+    private enum class ColorDragMode { SV, HUE }
+
+    private val themeColor = 0xFF93A8E4.toInt()
+    private val switchOffColor = 0xE0040210.toInt()
+    private val switchOnColor = 0xE0383D5B.toInt()
+    private val trackBaseColor = 0x3DFFFFFF.toInt()
+    private val sliderColor = 0xFFFFFFFF.toInt()
 
     private var loadingModules = false
     private var loadingSettingsSuffix = ""
@@ -76,7 +101,9 @@ object GuiClickGui : GuiScreen() {
         leftColor.targetColor = 0x2A1F085C.toInt()
         placeAlpha.targetValue = 1f
 
-//        testModules()
+        if (java.lang.Boolean.getBoolean("myauclickgui.testModules")) {
+            testModules()
+        }
     }
 
     private fun testModules() {
@@ -84,8 +111,16 @@ object GuiClickGui : GuiScreen() {
             val rSettings = ArrayList<Setting<*>>()
             val settingCount = r.nextInt() % 20 + 10
             for (j in 1 until settingCount) {
-                val t = r.nextInt() % 3
-                rSettings.add(if (t == 0) BooleanSetting("TestBooleanSetting $j", r.nextBoolean()) else if (t == 1) NumberSetting("TestNumberSetting $j", r.nextFloat() % 1f, Pair(0f, 1f)) else ModeSetting("TestModeSetting $j", "Option 2", listOf("Option 1", "Option 2", "Option 3")))
+                val setting = when (r.nextInt(4)) {
+                    0 -> BooleanSetting("TestBooleanSetting $j", r.nextBoolean())
+                    1 -> NumberSetting("TestNumberSetting $j", r.nextFloat() % 1f, Pair(0f, 1f))
+                    2 -> ModeSetting("TestModeSetting $j", "Option 2", listOf("Option 1", "Option 2", "Option 3"))
+                    else -> ColorSetting(
+                        "TestColorSetting $j",
+                        (0xFF000000L or (r.nextInt().toLong() and 0xFFFFFFL)).toInt()
+                    )
+                }
+                rSettings.add(setting)
             }
             mod.modules.add(Module("TestModule $i", r.nextBoolean(), null, rSettings))
         }
@@ -252,6 +287,13 @@ object GuiClickGui : GuiScreen() {
                         }
                         if (mouseButton == 1 && isIn) {
                             configuringModule = module
+                            expandedMode = null
+                            draggingModule = null
+                            draggingNumber = null
+                            draggingColor = null
+                            colorDragMode = null
+                            switchXMap.clear()
+                            switchBgMap.clear()
                             Thread({
                                 val settings = chat!!.loadSettingsForModule(module) { s -> loadingSettingsSuffix = s }
                                 configuringModule?.takeIf { it.settings.isEmpty() }?.also { it.settings = settings }
@@ -309,8 +351,219 @@ object GuiClickGui : GuiScreen() {
                 configurationScroll.targetValue = 0f
             }
             else {
+                val module = configuringModule ?: return@withClipping
+                val sx = x + lWidth + 10f
+                val rowWidth = rWidth - 20f
+                val mx = mouseX.toFloat()
+                val my = mouseY.toFloat()
+                val inPanel = RenderUtil.isInside(x + lWidth, y, rWidth, sHeight, 8f, mx, my)
+
+                fun renderBooleanSetting(setting: BooleanSetting, sy: Float) {
+                    val nameWidth = RenderUtil.getTextWidth(setting.name, Fonts.HarmonyOS, 6f)
+                    val baseX = sx + nameWidth + sw * 0.05f
+                    val baseY = sy + (25f - 22f) / 2f
+                    val switchX = switchXMap.getOrPut(setting, {
+                        EaseInOut(0.3f, 3).apply { currentValue = if (setting.value) 20f else 2f }
+                    })
+                    val switchBg = switchBgMap.getOrPut(setting, {
+                        SmoothColor(0.3f, 3).apply {
+                            currentValue = if (setting.value) switchOnColor else switchOffColor
+                            targetColor = if (setting.value) switchOnColor else switchOffColor
+                        }
+                    })
+                    if (mouseButton == 0 && inPanel && RenderUtil.isInside(baseX, baseY, 40f, 22f, 11f, mx, my)) {
+                        setting.value = !setting.value
+                        ChatManager.setValue(module, setting, setting.value)
+                    }
+                    switchX.targetValue = if (setting.value) 20f else 2f
+                    switchBg.targetColor = if (setting.value) switchOnColor else switchOffColor
+                    RenderUtil.drawTextVCenter(setting.name, sx, sy + 12.5f, Fonts.HarmonyOS, 6f, -1)
+                    RenderUtil.drawRoundedRect(baseX, baseY, 40f, 22f, 11f, switchBg.currentValue)
+                    RenderUtil.drawRoundedRect(baseX + switchX.currentValue, baseY + 2f, 18f, 18f, 9f, sliderColor)
+                }
+
+                fun renderModeSetting(setting: ModeSetting, sy: Float) {
+                    val modeExpend = modeSettingExpend.getOrPut(setting, { EaseInOut(0.3f, 3) })
+                    val vLine = modeSettingVLine.getOrPut(setting, {
+                        EaseOut(0.3f, 3).apply {
+                            currentValue = 25f + setting.modes.indexOf(setting.value).coerceAtLeast(0) * 18f
+                        }
+                    })
+                    val progress = modeExpend.currentValue
+                    val totalExpandH = setting.modes.size * 18f
+                    val modeX = sx + 12f
+                    val rowRight = sx + rowWidth
+
+                    if (mouseButton == 1 && inPanel && RenderUtil.isInside(sx, sy, rowWidth, 25f, mx, my)) {
+                        expandedMode = if (expandedMode == setting) null else setting
+                    }
+                    if (mouseButton == 0 && progress > 0.5f && inPanel) {
+                        for ((index, mode) in setting.modes.withIndex()) {
+                            val rowY = sy + 25f + index * 18f
+                            if (RenderUtil.isInside(modeX, rowY, rowRight - modeX, 18f, mx, my)) {
+                                if (mode != setting.value) {
+                                    setting.value = mode
+                                    ChatManager.setValue(module, setting, mode)
+                                }
+                                break
+                            }
+                        }
+                    }
+                    val selectedIndex = setting.modes.indexOf(setting.value).coerceAtLeast(0)
+                    modeExpend.targetValue = if (expandedMode == setting) 1f else 0f
+                    vLine.targetValue = 25f + selectedIndex * 18f
+
+                    RenderUtil.drawTextVCenter(setting.name, sx, sy + 12.5f, Fonts.HarmonyOS, 6f, -1)
+                    RenderUtil.drawTextVCenter(
+                        setting.value,
+                        sx + RenderUtil.getTextWidth(setting.name, Fonts.HarmonyOS, 6f) + sw * 0.05f,
+                        sy + 12.5f, Fonts.HarmonyOS, 5f, 0xBFFFFFFF.toInt()
+                    )
+                    if (progress > 0f) {
+                        RenderUtil.withClipping({
+                            RenderUtil.drawRect(sx, sy + 25f, rowWidth, progress * totalExpandH, -1)
+                        }, {
+                            for ((index, mode) in setting.modes.withIndex()) {
+                                val rowY = sy + 25f + index * 18f
+                                RenderUtil.drawRect(modeX, rowY, rowRight - modeX, 18f, switchOffColor)
+                                RenderUtil.drawTextVCenter(
+                                    mode, modeX + 8f, rowY + 9f, Fonts.HarmonyOS, 5f,
+                                    if (mode == setting.value) -1 else 0x9FFFFFFF.toInt()
+                                )
+                            }
+                            RenderUtil.drawRect(modeX, sy + vLine.currentValue, 1f, 18f, themeColor)
+                            RenderUtil.drawRect(
+                                modeX, sy + 25f + totalExpandH - 1f, rowRight - modeX, 1f,
+                                RenderUtil.alpha(themeColor, progress)
+                            )
+                        })
+                    }
+                }
+
+                fun renderNumberSetting(setting: NumberSetting, sy: Float) {
+                    val decimals = ChatManager.numberDecimals(setting)
+                    val minText = ChatManager.formatNumber(setting.range.first, decimals)
+                    val maxText = ChatManager.formatNumber(setting.range.second, decimals)
+                    val nameWidth = RenderUtil.getTextWidth(setting.name, Fonts.HarmonyOS, 6f)
+                    val minWidth = RenderUtil.getTextWidth(minText, Fonts.HarmonyOS, 4.5f)
+                    val maxWidth = RenderUtil.getTextWidth(maxText, Fonts.HarmonyOS, 4.5f)
+                    val trackX = sx + nameWidth + 10f + minWidth + 5f
+                    val trackW = (sx + rowWidth - trackX - 5f - maxWidth).coerceAtLeast(24f)
+                    val trackY = sy + 10.5f
+                    val range = setting.range.second - setting.range.first
+                    val slider = sliderXMap.getOrPut(setting, { EaseInOut(0.3f, 3) })
+
+                    if (draggingNumber == setting) {
+                        if (Mouse.isButtonDown(0)) {
+                            val pos = (mx - trackX).coerceIn(0f, trackW)
+                            slider.currentValue = pos
+                            slider.targetValue = pos
+                        }
+                    } else {
+                        val target = if (range <= 0f) 0f
+                            else ((setting.value - setting.range.first) / range * trackW).coerceIn(0f, trackW)
+                        slider.targetValue = target
+                    }
+                    if (mouseButton == 0 && inPanel && RenderUtil.isInside(trackX, sy, trackW, 25f, mx, my)) {
+                        draggingModule = module
+                        draggingNumber = setting
+                        dragTrackX = trackX
+                        dragTrackW = trackW
+                        val pos = (mx - trackX).coerceIn(0f, trackW)
+                        slider.currentValue = pos
+                        slider.targetValue = pos
+                    }
+
+                    RenderUtil.drawTextVCenter(setting.name, sx, sy + 12.5f, Fonts.HarmonyOS, 6f, -1)
+                    RenderUtil.drawTextVCenter(minText, sx + nameWidth + 10f, sy + 12.5f, Fonts.HarmonyOS, 4.5f, 0xAAFFFFFF.toInt())
+                    RenderUtil.drawTextVCenter(maxText, trackX + trackW + 5f, sy + 12.5f, Fonts.HarmonyOS, 4.5f, 0xAAFFFFFF.toInt())
+                    RenderUtil.drawRoundedRect(trackX, trackY, trackW, 4f, 2f, trackBaseColor)
+                    RenderUtil.withClipping({
+                        RenderUtil.drawRect(trackX, trackY, slider.currentValue, 4f, -1)
+                    }, {
+                        RenderUtil.drawRoundedRect(trackX, trackY, trackW, 4f, 2f, themeColor)
+                    })
+                    RenderUtil.drawCircle(trackX + slider.currentValue, trackY + 2f, 5f, sliderColor)
+                }
+
+                fun renderColorSetting(setting: ColorSetting, sy: Float) {
+                    val blockX = sx + rowWidth - 10f
+                    val blockY = sy + (25f - 10f) / 2f
+                    val displayColor = if (draggingColor == setting) colorDragValue else setting.value
+                    val (h, s, v) = if (draggingColor == setting)
+                        Triple(colorDragH, colorDragS, colorDragV) else rgbToHsv(setting.value)
+
+                    val sqSize = 60f
+                    val barW = 8f
+                    val pickerX = sx + (rowWidth - sqSize - barW - 8f) / 2f
+                    val pickerY = sy + 25f + (100f - sqSize) / 2f
+                    val sqX = pickerX
+                    val sqY = pickerY
+                    val barX = pickerX + sqSize + 8f
+                    val barY = pickerY
+
+                    if (mouseButton == 0 && inPanel) {
+                        if (RenderUtil.isInside(sqX, sqY, sqSize, sqSize, mx, my)) {
+                            draggingModule = module
+                            draggingColor = setting
+                            colorDragMode = ColorDragMode.SV
+                            colorDragH = rgbToHsv(setting.value).first
+                            colorDragS = ((mx - sqX) / sqSize).coerceIn(0f, 1f)
+                            colorDragV = (1f - (my - sqY) / sqSize).coerceIn(0f, 1f)
+                            colorDragValue = hsvToRgb(colorDragH, colorDragS, colorDragV)
+                        } else if (RenderUtil.isInside(barX, barY, barW, sqSize, mx, my)) {
+                            draggingModule = module
+                            draggingColor = setting
+                            colorDragMode = ColorDragMode.HUE
+                            val current = rgbToHsv(setting.value)
+                            colorDragS = current.second
+                            colorDragV = current.third
+                            colorDragH = ((my - barY) / sqSize * 360f).coerceIn(0f, 360f)
+                            colorDragValue = hsvToRgb(colorDragH, colorDragS, colorDragV)
+                        }
+                    }
+                    if (draggingColor == setting && Mouse.isButtonDown(0)) {
+                        when (colorDragMode) {
+                            ColorDragMode.SV -> {
+                                colorDragS = ((mx - sqX) / sqSize).coerceIn(0f, 1f)
+                                colorDragV = (1f - (my - sqY) / sqSize).coerceIn(0f, 1f)
+                            }
+                            ColorDragMode.HUE -> {
+                                colorDragH = ((my - barY) / sqSize * 360f).coerceIn(0f, 360f)
+                            }
+                            else -> {}
+                        }
+                        colorDragValue = hsvToRgb(colorDragH, colorDragS, colorDragV)
+                    }
+
+                    val hex = "%06X".format(displayColor and 0xFFFFFF)
+                    RenderUtil.drawTextVCenter(setting.name, sx, sy + 12.5f, Fonts.HarmonyOS, 6f, -1)
+                    RenderUtil.drawTextVCenter(
+                        hex, blockX - 5f - RenderUtil.getTextWidth(hex, Fonts.HarmonyOS, 5f),
+                        sy + 12.5f, Fonts.HarmonyOS, 5f, 0xD8FFFFFF.toInt()
+                    )
+                    RenderUtil.drawRoundedRect(blockX, blockY, 10f, 10f, 2f, displayColor)
+
+                    RenderUtil.drawHorizontalGradientRect(sqX, sqY, sqSize, sqSize, sliderColor, hsvToRgb(h, 1f, 1f))
+                    RenderUtil.drawVerticalGradientRect(sqX, sqY, sqSize, sqSize, 0x00000000, 0xFF000000.toInt())
+                    val markerX = sqX + s * sqSize
+                    val markerY = sqY + (1f - v) * sqSize
+                    RenderUtil.drawOutlinedRect(
+                        markerX - 3.5f, markerY - 3.5f, 7f, 7f, 1f,
+                        if (v > 0.6f) 0xFF000000.toInt() else sliderColor
+                    )
+                    for (i in 0 until 6) {
+                        RenderUtil.drawVerticalGradientRect(
+                            barX, barY + i * 10f, barW, 10f,
+                            hsvToRgb(i * 60f, 1f, 1f), hsvToRgb((i + 1) * 60f, 1f, 1f)
+                        )
+                    }
+                    val hueY = (barY + h / 360f * sqSize).coerceIn(barY + 1f, barY + sqSize - 1f)
+                    RenderUtil.drawRect(barX - 2f, hueY - 1f, barW + 4f, 2f, sliderColor)
+                }
+
                 var sy = y + 10f + configurationScroll.currentValue
-                for (setting in configuringModule?.settings ?: return@withClipping) {
+                for (setting in module.settings) {
                     val settingHeight = when (setting) {
                         is BooleanSetting -> 25f
                         is ModeSetting -> {
@@ -318,18 +571,44 @@ object GuiClickGui : GuiScreen() {
                             25f + modeExpend.currentValue * 18f * setting.modes.size
                         }
                         is NumberSetting -> 25f
+                        is ColorSetting -> 125f
                         else -> 25f
                     }
-                    sy += settingHeight
-                    if (sy + settingHeight < y + searchHeight - 10f || sy > y + sHeight + 10f)
+                    if (sy + settingHeight < y + searchHeight - 10f || sy > y + sHeight + 10f) {
+                        sy += settingHeight
                         continue
-                    when (setting) {
-                        is NumberSetting, is BooleanSetting, is ModeSetting -> {
-                            RenderUtil.drawTextVCenter(setting.name, x + lWidth + 10f, sy + 12.5f, Fonts.HarmonyOS, 6f, -1)
-                        }
                     }
-            } }
+                    when (setting) {
+                        is BooleanSetting -> renderBooleanSetting(setting, sy)
+                        is ModeSetting -> renderModeSetting(setting, sy)
+                        is NumberSetting -> renderNumberSetting(setting, sy)
+                        is ColorSetting -> renderColorSetting(setting, sy)
+                    }
+                    sy += settingHeight
+                }
+            }
         })
+        if (release || ((draggingNumber != null || draggingColor != null) && !Mouse.isButtonDown(0))) {
+            val dragModule = draggingModule
+            val dragNum = draggingNumber
+            if (dragNum != null && dragModule != null) {
+                val slider = sliderXMap[dragNum]
+                val range = dragNum.range.second - dragNum.range.first
+                val pos = (slider?.currentValue ?: 0f).coerceIn(0f, dragTrackW)
+                val finalValue = if (range > 0f) dragNum.range.first + pos / dragTrackW * range else dragNum.range.first
+                dragNum.value = finalValue
+                ChatManager.setValue(dragModule, dragNum, finalValue)
+            }
+            val dragCol = draggingColor
+            if (dragCol != null && dragModule != null) {
+                dragCol.value = colorDragValue
+                ChatManager.setValue(dragModule, dragCol, colorDragValue)
+            }
+            draggingNumber = null
+            draggingColor = null
+            colorDragMode = null
+            draggingModule = null
+        }
         GlStateManager.color(1f, 1f, 1f, 1f)
         GlStateManager.enableTexture2D()
         GlStateManager.disableBlend()
@@ -427,6 +706,47 @@ object GuiClickGui : GuiScreen() {
         ""
     }
 
+    private fun hsvToRgb(h: Float, s: Float, v: Float): Int {
+        val hh = (((h % 360f) + 360f) % 360f) / 60f
+        val i = hh.toInt().coerceIn(0, 5)
+        val f = hh - i
+        val p = v * (1f - s)
+        val q = v * (1f - s * f)
+        val t = v * (1f - s * (1f - f))
+        val (r, g, b) = when (i) {
+            0 -> Triple(v, t, p)
+            1 -> Triple(q, v, p)
+            2 -> Triple(p, v, t)
+            3 -> Triple(p, q, v)
+            4 -> Triple(t, p, v)
+            else -> Triple(v, p, q)
+        }
+        return RenderUtil.getRGB(
+            (r * 255f + 0.5f).toInt(),
+            (g * 255f + 0.5f).toInt(),
+            (b * 255f + 0.5f).toInt(),
+            255
+        )
+    }
+
+    private fun rgbToHsv(color: Int): Triple<Float, Float, Float> {
+        val r = ((color shr 16) and 0xFF) / 255f
+        val g = ((color shr 8) and 0xFF) / 255f
+        val b = (color and 0xFF) / 255f
+        val max = maxOf(r, g, b)
+        val min = minOf(r, g, b)
+        val d = max - min
+        var h = when {
+            d == 0f -> 0f
+            max == r -> 60f * (((g - b) / d) % 6f)
+            max == g -> 60f * ((b - r) / d + 2f)
+            else -> 60f * ((r - g) / d + 4f)
+        }
+        if (h < 0f) h += 360f
+        val s = if (max == 0f) 0f else d / max
+        return Triple(h, s, max)
+    }
+
     private fun charIndexAt(relX: Float, widths: FloatArray): Int {
         var best = 0
         var bestDist = Float.MAX_VALUE
@@ -443,6 +763,11 @@ object GuiClickGui : GuiScreen() {
     override fun onGuiClosed() {
         super.onGuiClosed()
         searchTyping = false
+        expandedMode = null
+        draggingNumber = null
+        draggingColor = null
+        colorDragMode = null
+        draggingModule = null
     }
 
     override fun doesGuiPauseGame(): Boolean {

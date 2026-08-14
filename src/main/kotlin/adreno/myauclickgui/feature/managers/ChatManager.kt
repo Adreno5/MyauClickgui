@@ -6,9 +6,12 @@ import adreno.myauclickgui.feature.types.chat.OutputReply
 import adreno.myauclickgui.feature.types.config.Config
 import adreno.myauclickgui.feature.types.module.Module
 import adreno.myauclickgui.feature.types.module.settings.BooleanSetting
+import adreno.myauclickgui.feature.types.module.settings.ColorSetting
 import adreno.myauclickgui.feature.types.module.settings.ModeSetting
 import adreno.myauclickgui.feature.types.module.settings.NumberSetting
 import adreno.myauclickgui.feature.types.module.settings.Setting
+import adreno.myauclickgui.feature.types.module.settings.parseModeOrColorSetting
+import adreno.myauclickgui.feature.types.module.settings.parseNumberOrColorSetting
 import adreno.myauclickgui.feature.utils.ChatUtil
 import net.minecraft.client.Minecraft
 import java.util.function.Consumer
@@ -44,6 +47,64 @@ object ChatManager {
             .apply { isDaemon= true }.start()
     }
 
+    fun setValue(module: Module, setting: BooleanSetting, value: Boolean) {
+        sendSettingCommand(module, setting, value.toString()) { setting.value = value }
+    }
+
+    fun setValue(module: Module, setting: ModeSetting, value: String) {
+        sendSettingCommand(module, setting, value) { setting.value = value }
+    }
+
+    fun setValue(module: Module, setting: NumberSetting, value: Float) {
+        sendSettingCommand(module, setting, formatNumber(value)) { setting.value = value }
+    }
+
+    fun setValue(module: Module, setting: ColorSetting, value: Int) {
+        sendSettingCommand(module, setting, "%06X".format(value and 0xFFFFFF)) { setting.value = value }
+    }
+
+    private fun sendSettingCommand(module: Module, setting: Setting<*>, commandValue: String, apply: () -> Unit) {
+        Thread({
+            val reply = chat.getMyauReply(".${module.name} ${setting.name} $commandValue")
+
+            if (reply is ErrorReply) {
+                chat.err("Failed to set ${module.name} ${setting.name}: " + reply.content)
+                return@Thread
+            }
+            mc.addScheduledTask { apply() }
+        }, "MyauClickGui-SettingApplier")
+            .apply { isDaemon = true }.start()
+    }
+
+    fun formatNumber(value: Float): String =
+        if (value.isFinite() && value == value.toLong().toFloat()) value.toLong().toString() else value.toString()
+
+    fun numberDecimals(setting: NumberSetting): Int {
+        return maxOf(decimalPlaces(setting.range.first), decimalPlaces(setting.range.second))
+    }
+
+    fun formatNumber(value: Float, decimals: Int): String {
+        if (decimals <= 0 || (value.isFinite() && value == value.toLong().toFloat())) return formatNumber(value)
+        return String.format(java.util.Locale.ROOT, "%.${decimals}f", value)
+            .trimEnd('0').trimEnd('.')
+    }
+
+    fun roundNumber(value: Float, decimals: Int): Float {
+        if (!value.isFinite() || decimals <= 0) return if (value.isFinite()) value.toLong().toFloat() else value
+        val scale = Math.pow(10.0, decimals.toDouble()).toFloat()
+        return kotlin.math.round(value * scale) / scale
+    }
+
+    private fun decimalPlaces(value: Float): Int {
+        val text = value.toString().lowercase(java.util.Locale.ROOT)
+        val exponent = text.indexOf('e')
+        if (exponent >= 0) {
+            val exponentValue = text.substring(exponent + 1).toIntOrNull() ?: 0
+            return maxOf(0, -exponentValue)
+        }
+        return text.substringAfter('.', "").length
+    }
+
     fun loadSettingsForModule(target: Module, objectStringCallback: ((String) -> Unit)? = null): ArrayList<Setting<*>> {
         val settings: ArrayList<Setting<*>> = ArrayList()
         val errors: MutableList<String> = mutableListOf()
@@ -65,60 +126,45 @@ object ChatManager {
                 » auto-block-no-slow: false
                 » auto-block-hold: 1.5 // Number Setting */
             for (line in (reply as OutputReply).unformatted) {
-                if (!line.startsWith("»"))
-                    continue
-                val settingName = line.substringAfter("» ").substringBefore(": ")
-                val valueString = line.substringAfter(": ")
-                val setting = if (valueString == "false" || valueString == "true") BooleanSetting(settingName, valueString.toBoolean())
-                else if (valueString.toDoubleOrNull() != null) {
-                    // Number Setting reply example (. + Module name + Setting name (+ value))
-                    // [Myau] KillAura: angle-step is set to 90 (30-180)
-                    mc.addScheduledTask { objectStringCallback?.let { it(settingName) } }
-                    val sReply = chat.getMyauReply(".${target.name} $settingName")
-                    if (sReply is ErrorReply) {
-                        errors.add("Failed to load setting $settingName: ${sReply.content}")
+                try {
+                    if (!line.startsWith("»"))
                         continue
-                    }
-                    val lineOutput = (sReply as OutputReply).unformatted.firstOrNull()
-                    var numberSetting: Triple<Float, Float, Float>? = null
-                    if (lineOutput != null) {
-                        val valueAndRange = lineOutput.substringAfter("is set to ", "")
-                        val rangeStart = valueAndRange.indexOf('(')
-                        val rangeEnd = valueAndRange.indexOf(')', rangeStart + 1)
-                        if (rangeStart in 1 until rangeEnd) {
-                            val value = valueAndRange.substring(0, rangeStart).trim().toFloatOrNull()
-                            if (value != null) {
-                                val range = valueAndRange.substring(rangeStart + 1, rangeEnd).trim()
-                                for (separator in 1 until range.length) {
-                                    if (range[separator] != '-') continue
-                                    val minimum = range.substring(0, separator).trim().toFloatOrNull() ?: continue
-                                    val maximum = range.substring(separator + 1).trim().toFloatOrNull() ?: continue
-                                    numberSetting = Triple(value, minimum, maximum)
-                                    break
-                                }
-                            }
+                    val settingName = line.substringAfter("» ").substringBefore(": ")
+                    val valueString = line.substringAfter(": ")
+                    val setting = if (valueString == "false" || valueString == "true") BooleanSetting(settingName, valueString.toBoolean())
+                    else if (valueString.toDoubleOrNull() != null) {
+                        // Number Setting reply example (. + Module name + Setting name (+ value))
+                        // [Myau] KillAura: angle-step is set to 90 (30-180)
+                        mc.addScheduledTask { objectStringCallback?.let { it(settingName) } }
+                        val sReply = chat.getMyauReply(".${target.name} $settingName")
+                        if (sReply is ErrorReply) {
+                            errors.add("Failed to load setting $settingName: ${sReply.content}")
+                            continue
                         }
+                        val lineOutput = (sReply as OutputReply).unformatted.firstOrNull()
+                        val parsedSetting = lineOutput?.let { parseNumberOrColorSetting(settingName, it) }
+                        if (parsedSetting == null) {
+                            errors.add("Unable to parse number setting $settingName: ${lineOutput ?: "empty reply"}")
+                            continue
+                        }
+                        parsedSetting
+                    } else {
+                        // Mode Setting reply example (. + Module name + Setting name)
+                        // [Myau] KillAura: mode is set to SINGLE (SINGLE, SWITCH)
+                        mc.addScheduledTask { objectStringCallback?.let { it(settingName) } }
+                        val sReply = chat.getMyauReply(".${target.name} $settingName")
+                        if (sReply is ErrorReply) {
+                            errors.add("Failed to load setting $settingName: ${sReply.content}")
+                            continue
+                        }
+                        val lineOutput = (sReply as OutputReply).unformatted[0]
+                        parseModeOrColorSetting(settingName, lineOutput)
                     }
-                    if (numberSetting == null) {
-                        errors.add("Unable to parse number setting $settingName: ${lineOutput ?: "empty reply"}")
-                        continue
-                    }
-                    NumberSetting(settingName, numberSetting.first, Pair(numberSetting.second, numberSetting.third))
-                } else {
-                    // Mode Setting reply example (. + Module name + Setting name)
-                    // [Myau] KillAura: mode is set to SINGLE (SINGLE, SWITCH)
-                    mc.addScheduledTask { objectStringCallback?.let { it(settingName) } }
-                    val sReply = chat.getMyauReply(".${target.name} $settingName")
-                    if (sReply is ErrorReply) {
-                        errors.add("Failed to load setting $settingName: ${sReply.content}")
-                        continue
-                    }
-                    val lineOutput = (sReply as OutputReply).unformatted[0]
-                    val settingValue = lineOutput.substringAfter("is set to ").substringBefore(" (")
-                    val settingModes = lineOutput.substringAfter("(").substringBefore(")").split(", ")
-                    ModeSetting(settingName, settingValue, settingModes)
+                    settings.add(setting)
+                } catch (e: Exception) {
+                    val detail = e.message ?: "No message"
+                    errors.add("Unable to parse setting output: $line (${e.javaClass.simpleName}: $detail)")
                 }
-                settings.add(setting)
             }
 
             mc.addScheduledTask { objectStringCallback?.let { it("") } }
@@ -150,18 +196,23 @@ object ChatManager {
             val configs = ArrayList<Config>()
             val errors = ArrayList<String>()
             for (line in (reply as OutputReply).unformatted) {
-                if (!line.startsWith("»"))
-                    continue
+                try {
+                    if (!line.startsWith("»"))
+                        continue
 
-                if (line.split(" ").size != 2) {
-                    errors.add("Unable to parse the output: $line")
-                    continue
+                    if (line.split(" ").size != 2) {
+                        errors.add("Unable to parse the output: $line")
+                        continue
+                    }
+
+                    val configName = line.removePrefix("» ").removeSuffix(".json")
+                    configs.add(Config(
+                        configName, "$configName.json"
+                    ))
+                } catch (e: Exception) {
+                    val detail = e.message ?: "No message"
+                    errors.add("Unable to parse the output: $line (${e.javaClass.simpleName}: $detail)")
                 }
-
-                val configName = line.removePrefix("» ").removeSuffix(".json")
-                configs.add(Config(
-                    configName, "$configName.json"
-                ))
             }
             mc.addScheduledTask {
                 mod.configs.clear()
@@ -190,20 +241,25 @@ object ChatManager {
             val modules = ArrayList<Module>()
             val errors = ArrayList<String>()
             for (line in (reply as OutputReply).unformatted) {
-                if (!line.startsWith("»"))
-                    continue
+                try {
+                    if (!line.startsWith("»"))
+                        continue
 
-                val split = line.split(" ")
-                if (split.size !in 3..4) {
-                    errors.add("Unable to parse the output: $line")
-                    continue
+                    val split = line.split(" ")
+                    if (split.size !in 3..4) {
+                        errors.add("Unable to parse the output: $line")
+                        continue
+                    }
+                    val hasBinding = split[1].contains("[") && split[1].contains("]")
+                    val moduleName = if (hasBinding) split[2] else split[1]
+                    val moduleState = split[if (hasBinding) 3 else 2].contains("ON")
+                    val moduleBinding = if (hasBinding) split[1] else null
+
+                    modules.add(Module(moduleName, moduleState, moduleBinding))
+                } catch (e: Exception) {
+                    val detail = e.message ?: "No message"
+                    errors.add("Unable to parse the output: $line (${e.javaClass.simpleName}: $detail)")
                 }
-                val hasBinding = split[1].contains("[") && split[1].contains("]")
-                val moduleName = if (hasBinding) split[2] else split[1]
-                val moduleState = split[if (hasBinding) 3 else 2].contains("ON")
-                val moduleBinding = if (hasBinding) split[1] else null
-
-                modules.add(Module(moduleName, moduleState, moduleBinding))
             }
 
             mc.addScheduledTask {

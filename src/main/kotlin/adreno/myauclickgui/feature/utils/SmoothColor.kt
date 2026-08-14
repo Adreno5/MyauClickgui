@@ -25,13 +25,20 @@ class SmoothColor(animationTime: Float, powerNumber: Int) {
 
     private fun clampColor(value: Float): Int = 0.coerceAtLeast(255.coerceAtMost(value.toInt()))
 
-    val currentValue: Int
+    var currentValue: Int
         get() = RenderUtil.getRGB(
             clampColor(rt.currentValue),
             clampColor(gr.currentValue),
             clampColor(bt.currentValue),
             clampColor(at.currentValue)
         )
+        set(value) {
+            val parsed = RenderUtil.parseARGB(value)
+            rt.currentValue = parsed.r.toFloat()
+            gr.currentValue = parsed.g.toFloat()
+            bt.currentValue = parsed.b.toFloat()
+            at.currentValue = parsed.a.toFloat()
+        }
 
     fun reset() {
         rt.reset()
