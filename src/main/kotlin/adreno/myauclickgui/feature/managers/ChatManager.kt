@@ -15,6 +15,7 @@ import adreno.myauclickgui.feature.types.module.settings.parseNumberOrColorSetti
 import adreno.myauclickgui.feature.utils.ChatUtil
 import net.minecraft.client.Minecraft
 import java.util.function.Consumer
+import kotlin.math.pow
 
 object ChatManager {
     private val mc = Minecraft.getMinecraft()
@@ -91,7 +92,7 @@ object ChatManager {
 
     fun roundNumber(value: Float, decimals: Int): Float {
         if (!value.isFinite() || decimals <= 0) return if (value.isFinite()) value.toLong().toFloat() else value
-        val scale = Math.pow(10.0, decimals.toDouble()).toFloat()
+        val scale = 10.0.pow(decimals.toDouble()).toFloat()
         return kotlin.math.round(value * scale) / scale
     }
 

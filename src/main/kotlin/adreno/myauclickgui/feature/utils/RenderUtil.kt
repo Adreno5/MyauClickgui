@@ -1,4 +1,4 @@
-﻿package adreno.myauclickgui.feature.utils
+package adreno.myauclickgui.feature.utils
 
 import adreno.myauclickgui.feature.types.fonts.Font
 import adreno.myauclickgui.feature.types.other.ARGBColor
@@ -293,8 +293,10 @@ void main() {
             val c = text[i]
             if (c == '\u00a7' && i + 1 < text.length) {
                 val code = text[i + 1]
-                dx += drawText(plain.toString(), dx, y, font, size, current)
-                plain.setLength(0)
+                if (plain.isNotEmpty()) {
+                    dx = drawText(plain.toString(), dx, y, font, size, current).toFloat()
+                    plain.setLength(0)
+                }
                 current = formatCode(code, color)
                 i += 2
             } else {
@@ -302,7 +304,9 @@ void main() {
                 i++
             }
         }
-        dx += drawText(plain.toString(), dx, y, font, size, current)
+        if (plain.isNotEmpty()) {
+            dx = drawText(plain.toString(), dx, y, font, size, current).toFloat()
+        }
         return Math.round(dx)
     }
 
@@ -813,7 +817,7 @@ void main() {
         'd', 'D' -> 0xFFFF55FF.toInt()
         'e', 'E' -> 0xFFFFFF55.toInt()
         'f', 'F' -> 0xFFFFFFFF.toInt()
-        'r', 'R' -> 0xFFFFFFFF.toInt()
+        'r', 'R' -> fallback
         else -> fallback
     }
 

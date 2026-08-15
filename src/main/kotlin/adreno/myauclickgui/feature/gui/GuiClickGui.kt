@@ -20,12 +20,12 @@ import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.util.ResourceLocation
 import org.lwjgl.input.Keyboard
 import org.lwjgl.input.Mouse
-import scala.annotation.switch
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
 import java.util.Random
 import kotlin.math.abs
+import kotlin.math.max
 
 object GuiClickGui : GuiScreen() {
     private val mod = MyauClickGui.getInstance()
@@ -86,17 +86,19 @@ object GuiClickGui : GuiScreen() {
     private var colorDragValue = 0xFFFFFFFF.toInt()
     private var dragTrackX = 0f
     private var dragTrackW = 0f
-    private var lastLogCount = 0
+    private var lastLogSize: Int = 0
     private val logOffset = EaseInOut(0.2f, 3)
+    private val logBgWidth = EaseInOut(0.3f, 2)
+    private val logHeights: ArrayDeque<Float> = ArrayDeque()
     private val r = Random()
 
     private enum class ColorDragMode { SV, HUE }
 
-    private val themeColor = 0xFF93A8E4.toInt()
-    private val switchOffColor = 0xE0040210.toInt()
-    private val switchOnColor = 0xE0383D5B.toInt()
-    private val trackBaseColor = 0x3DFFFFFF.toInt()
-    private val sliderColor = 0xFFFFFFFF.toInt()
+    private const val themeColor = 0xFF93A8E4.toInt()
+    private const val switchOffColor = 0xE0040210.toInt()
+    private const val switchOnColor = 0xE0383D5B.toInt()
+    private const val trackBaseColor = 0x3DFFFFFF.toInt()
+    private const val sliderColor = 0xFFFFFFFF.toInt()
 
     private var loadingModules = false
     private var loadingSettingsSuffix = ""
@@ -206,6 +208,45 @@ object GuiClickGui : GuiScreen() {
                 moduleScroll.targetValue += offset
             else if (RenderUtil.isInside(x + lWidth, y, rWidth, sHeight, 0f, 8f, 8f, 0f, mouseX.toFloat(), mouseY.toFloat()))
                 configurationScroll.targetValue += offset
+        }
+
+        val logsSnapshot: List<String>
+        synchronized(mod.logs) {
+            logsSnapshot = ArrayList(mod.logs)
+            val newCount = logsSnapshot.size - lastLogSize
+            if (newCount > 0) {
+                var added = 0f
+                for (i in lastLogSize until logsSnapshot.size) {
+                    val h = RenderUtil.getTextHeight(logsSnapshot[i], Fonts.HarmonyOS, 6f).toFloat()
+                    logHeights.addLast(h)
+                    added += h
+                }
+                if (added > 0f) {
+                    logOffset.targetValue += added
+                }
+            } else if (newCount < 0) {
+                repeat(-newCount) { if (logHeights.isNotEmpty()) logHeights.removeFirst() }
+                var total = 0f
+                for (h in logHeights) total += h
+                logOffset.targetValue = total
+            }
+            lastLogSize = logsSnapshot.size
+
+            var maxWidth = 0f
+            var ly = sr.scaledHeight - logOffset.currentValue + RenderUtil.getTextHeight(Fonts.HarmonyOS, 6f)
+            RenderUtil.renderBlur({
+                    RenderUtil.drawRoundedRect(0f, ly - 5f, logBgWidth.currentValue + 10f, sr.scaledHeight.toFloat(), 0f, 5f, 0f, 0f, -1)
+                }, 32)
+            RenderUtil.drawRoundedRect(0f, ly - 5f, logBgWidth.currentValue + 10f, sr.scaledHeight.toFloat(), 0f, 5f, 0f, 0f, 0xD5070312.toInt())
+            for ((log, h) in logsSnapshot.asSequence().zip(logHeights.asSequence())) {
+                if (ly >= sr.scaledHeight) break
+                if (ly + h > 0f) {
+                    RenderUtil.drawTextWithFormatting(log, 5f, ly, Fonts.HarmonyOS, 6f, -1)
+                }
+                maxWidth = max(maxWidth, RenderUtil.getTextWidth(log, Fonts.HarmonyOS, 6f))
+                ly += h
+            }
+            logBgWidth.targetValue = maxWidth
         }
 
         RenderUtil.renderBlur({

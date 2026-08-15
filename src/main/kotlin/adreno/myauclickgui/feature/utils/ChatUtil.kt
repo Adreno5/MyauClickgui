@@ -85,30 +85,36 @@ object ChatUtil {
 
     @JvmStatic
     fun onChatMessage(component: IChatComponent, chatLineId: Int): Boolean { // hooked by mixin
-        val text = component.unformattedText
-        val plain = text.replace(Regex("§."), "")
+        val formatted = component.formattedText
+        val plain = formatted.replace(Regex("§."), "")
         val match = plain.startsWith("[Myau]") || plain.startsWith("»")
         if (!match) return false
         unformatted.add(plain)
         if (listening) {
-            clog(plain)
+            clog(formatted)
             return true
         }
         return false
     }
 
     fun clog(message: String) {
-        mod.logs.addLast(message)
-        if (mod.logs.size > 1500)
-            mod.logs.removeFirst()
+        synchronized(mod.logs) {
+            mod.logs.addLast(message)
+            if (mod.logs.size > 250)
+                mod.logs.removeFirst()
+        }
     }
 
     fun log(message: String) {
-        mc.ingameGUI.chatGUI.printChatMessage(ChatComponentText("§7[§fMyauClickGui]§7 $message"))
+        val text = "§7[§fMyauClickGui]§7 $message"
+        mc.ingameGUI.chatGUI.printChatMessage(ChatComponentText(text))
+        clog(text)
     }
 
     fun err(message: String) {
-        mc.ingameGUI.chatGUI.printChatMessage(ChatComponentText("§7[§cMyauClickGui · Error]§7 $message"))
+        val text = "§7[§cMyauClickGui · Error]§7 $message"
+        mc.ingameGUI.chatGUI.printChatMessage(ChatComponentText(text))
         SoundUtil.playDirect(sound)
+        clog(text)
     }
 }
