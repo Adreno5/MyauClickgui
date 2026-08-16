@@ -4,6 +4,7 @@ import adreno.myauclickgui.MyauClickGui
 import adreno.myauclickgui.feature.types.chat.ErrorReply
 import adreno.myauclickgui.feature.types.chat.MyauReply
 import adreno.myauclickgui.feature.types.chat.OutputReply
+import adreno.myauclickgui.feature.types.logs.LogInfo
 import net.minecraft.client.Minecraft
 import net.minecraft.util.ChatComponentText
 import net.minecraft.util.IChatComponent
@@ -85,13 +86,14 @@ object ChatUtil {
 
     @JvmStatic
     fun onChatMessage(component: IChatComponent, chatLineId: Int): Boolean { // hooked by mixin
-        val formatted = component.formattedText
-        val plain = formatted.replace(Regex("§."), "")
+        val fmt = component.formattedText
+        val plain = fmt.replace(Regex("§."), "")
         val match = plain.startsWith("[Myau]") || plain.startsWith("»")
         if (!match) return false
         unformatted.add(plain)
+        formatted.add(fmt)
         if (listening) {
-            clog(formatted)
+            clog(fmt)
             return true
         }
         return false
@@ -99,7 +101,7 @@ object ChatUtil {
 
     fun clog(message: String) {
         synchronized(mod.logs) {
-            mod.logs.addLast(message)
+            mod.logs.addLast(LogInfo(message))
             if (mod.logs.size > 250)
                 mod.logs.removeFirst()
         }

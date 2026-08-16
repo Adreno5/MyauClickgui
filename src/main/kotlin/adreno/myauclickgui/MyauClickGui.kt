@@ -4,8 +4,8 @@ import adreno.myauclickgui.feature.ClickGuiKeyBinding
 import adreno.myauclickgui.feature.gui.GuiClickGui
 import adreno.myauclickgui.feature.managers.ChatManager
 import adreno.myauclickgui.feature.types.config.Config
+import adreno.myauclickgui.feature.types.logs.LogInfo
 import adreno.myauclickgui.feature.types.module.Module
-import adreno.myauclickgui.feature.utils.RenderUtil
 import net.minecraftforge.common.MinecraftForge
 import net.minecraftforge.fml.client.registry.ClientRegistry
 import net.minecraftforge.fml.common.Mod
@@ -31,7 +31,7 @@ class MyauClickGui {
     var guiClickGui: GuiClickGui? = null
 
     val modules: ArrayList<Module> = ArrayList()
-    val logs: ArrayDeque<String> = ArrayDeque()
+    val logs: ArrayDeque<LogInfo> = ArrayDeque()
     val configs: ArrayDeque<Config> = ArrayDeque()
 
     init {
@@ -45,6 +45,8 @@ class MyauClickGui {
         ClientRegistry.registerKeyBinding(ClickGuiKeyBinding.keyGui)
         MinecraftForge.EVENT_BUS.register(ClickGuiKeyBinding())
         MinecraftForge.EVENT_BUS.register(chatManager)
-        RenderUtil.ensureStencil()
+        // Stencil setup is deferred to GuiClickGui.initGui: the framebuffer does not
+        // exist yet during FML init, and enabling stencil recreates it, so it must not
+        // happen while a frame is being drawn.
     }
 }

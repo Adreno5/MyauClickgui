@@ -15,15 +15,14 @@ import org.lwjgl.opengl.GL13
 import org.lwjgl.opengl.GL20
 import org.lwjgl.opengl.GL30
 import java.awt.image.BufferedImage
-import java.nio.IntBuffer
 import java.util.*
 import javax.imageio.ImageIO
 
 object RenderUtil {
     private val mc = Minecraft.getMinecraft()
-    private val scissorStack: Deque<IntArray> = ArrayDeque()
-    private var stencilDepth = 0
-    private const val MAX_STENCIL_DEPTH = 8
+    // Nested clip rectangles in GUI space as (x1, y1, x2, y2); each push intersects
+    // with the one below so inner clips can never draw outside their parent.
+    private val clipStack: Deque<FloatArray> = ArrayDeque()
     private val textureCache = HashMap<ResourceLocation, Int>()
     private var blurFbo: Framebuffer? = null
     private var blurFbo2: Framebuffer? = null
@@ -398,98 +397,82 @@ void main() {
         }
     }
 
+    /**
+     * Clips [render] to the rectangle [x], [y], [w], [h] using the scissor test.
+     *
+     * This deliberately does not use the stencil buffer. Minecraft's main framebuffer
+     * has no stencil attachment, and adding one via Framebuffer.enableStencil() calls
+     * createBindFramebuffer(), which deletes the framebuffer's colour texture and
+     * generates a new id. Anything caching the old id — OptiFine's shader and
+     * first-person hand passes most visibly — then samples a deleted texture, which is
+     * what made the held item disappear after the GUI had been opened once.
+     *
+     * Nested calls intersect, so an inner clip never escapes its parent.
+     */
     @JvmStatic
-    fun withClipping(clip: () -> Unit, render: () -> Unit) {
-        ensureStencil()
-
-        val scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
-        if (scissor) GL11.glDisable(GL11.GL_SCISSOR_TEST)
-
-        if (stencilDepth >= MAX_STENCIL_DEPTH) {
-            if (scissor) GL11.glEnable(GL11.GL_SCISSOR_TEST)
-            throw IllegalStateException("withClipping supports up to $MAX_STENCIL_DEPTH nested levels")
-        }
-
-        val depth = stencilDepth++
-        val stencilBit = 1 shl depth
-        val parentMask = stencilBit - 1
-        val clippingMask = parentMask or stencilBit
-
-        GL11.glEnable(GL11.GL_STENCIL_TEST)
-        if (depth == 0) {
-            GL11.glStencilMask(0xFF)
-            GL11.glClearStencil(0)
-            GL11.glClear(GL11.GL_STENCIL_BUFFER_BIT)
-        } else {
-            // The bit is reused by sibling clips, so clear only this level.
-            GL11.glStencilMask(stencilBit)
-            GL11.glClearStencil(0)
-            GL11.glClear(GL11.GL_STENCIL_BUFFER_BIT)
-        }
-
-        GL11.glStencilMask(stencilBit)
-        GL11.glStencilFunc(GL11.GL_EQUAL, clippingMask, parentMask)
-        GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_REPLACE, GL11.GL_REPLACE)
-        GlStateManager.colorMask(false, false, false, false)
-
+    fun withClipping(x: Float, y: Float, w: Float, h: Float, render: () -> Unit) {
+        pushClip(x, y, w, h)
         try {
-            clip()
-
-            GlStateManager.colorMask(true, true, true, true)
-            GL11.glStencilMask(0x00)
-            GL11.glStencilFunc(GL11.GL_EQUAL, clippingMask, clippingMask)
-            GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
-
             render()
         } finally {
-            GlStateManager.colorMask(true, true, true, true)
-            stencilDepth--
-            if (stencilDepth == 0) {
-                GL11.glStencilMask(0xFF)
-                GL11.glDisable(GL11.GL_STENCIL_TEST)
-            } else {
-                val restoredMask = (1 shl stencilDepth) - 1
-                GL11.glStencilMask(0x00)
-                GL11.glStencilFunc(GL11.GL_EQUAL, restoredMask, restoredMask)
-                GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
-            }
-            if (scissor) GL11.glEnable(GL11.GL_SCISSOR_TEST) else GL11.glDisable(GL11.GL_SCISSOR_TEST)
+            popClip()
         }
     }
 
     @JvmStatic
     fun withClipping(x: Float, y: Float, w: Float, h: Float, render: Runnable) {
-        beginScissor(x, y, w, h)
-        try {
-            render.run()
-        } finally {
-            endScissor()
-        }
+        withClipping(x, y, w, h, { render.run() })
     }
 
     @JvmStatic
-    fun beginScissor(x: Float, y: Float, w: Float, h: Float) {
-        val box: IntBuffer = BufferUtils.createIntBuffer(16)
-        GL11.glGetInteger(GL11.GL_SCISSOR_BOX, box)
-        scissorStack.push(intArrayOf(box.get(0), box.get(1), box.get(2), box.get(3)))
+    fun pushClip(x: Float, y: Float, w: Float, h: Float) {
+        var x1 = Math.min(x, x + w)
+        var y1 = Math.min(y, y + h)
+        var x2 = Math.max(x, x + w)
+        var y2 = Math.max(y, y + h)
 
+        // Intersect with the enclosing clip so children stay inside their parent.
+        clipStack.peek()?.let { parent ->
+            x1 = Math.max(x1, parent[0])
+            y1 = Math.max(y1, parent[1])
+            x2 = Math.min(x2, parent[2])
+            y2 = Math.min(y2, parent[3])
+        }
+        if (x2 < x1) x2 = x1
+        if (y2 < y1) y2 = y1
+
+        clipStack.push(floatArrayOf(x1, y1, x2, y2))
+        applyClip(x1, y1, x2, y2)
+    }
+
+    @JvmStatic
+    fun popClip() {
+        if (clipStack.isEmpty()) return
+        clipStack.pop()
+        val parent = clipStack.peek()
+        if (parent == null) {
+            GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        } else {
+            applyClip(parent[0], parent[1], parent[2], parent[3])
+        }
+    }
+
+    /** Clears any clip left behind by an aborted render. */
+    @JvmStatic
+    fun resetClipState() {
+        clipStack.clear()
+        GL11.glDisable(GL11.GL_SCISSOR_TEST)
+    }
+
+    private fun applyClip(x1: Float, y1: Float, x2: Float, y2: Float) {
         val scale = getScale()
+        // glScissor is in framebuffer pixels measured from the bottom-left corner.
+        val px = Math.round(x1 * scale)
+        val py = Math.round(mc.displayHeight - y2 * scale)
+        val pw = Math.max(0, Math.round((x2 - x1) * scale))
+        val ph = Math.max(0, Math.round((y2 - y1) * scale))
         GL11.glEnable(GL11.GL_SCISSOR_TEST)
-        GL11.glScissor((x * scale).toInt(), (mc.displayHeight - (y + h) * scale).toInt(),
-                (w * scale).toInt(), (h * scale).toInt())
-    }
-
-    @JvmStatic
-    fun endScissor() {
-        if (scissorStack.isEmpty()) {
-            GL11.glDisable(GL11.GL_SCISSOR_TEST)
-            return
-        }
-        val previous = scissorStack.pop()
-        GL11.glScissor(previous[0], previous[1], previous[2], previous[3])
-        if (scissorStack.isEmpty()) {
-            GL11.glDisable(GL11.GL_SCISSOR_TEST)
-        }
+        GL11.glScissor(px, py, pw, ph)
     }
     @JvmStatic
     fun renderBlur(clip: () -> Unit, radius: Int) {
@@ -511,11 +494,9 @@ void main() {
         val texture = GL11.glIsEnabled(GL11.GL_TEXTURE_2D)
         val lighting = GL11.glIsEnabled(GL11.GL_LIGHTING)
         val scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
-        val stencil = GL11.glIsEnabled(GL11.GL_STENCIL_TEST)
         val cull = GL11.glIsEnabled(GL11.GL_CULL_FACE)
 
         GL11.glDisable(GL11.GL_SCISSOR_TEST)
-        GL11.glDisable(GL11.GL_STENCIL_TEST)
         GlStateManager.disableCull()
 
         GlStateManager.matrixMode(GL11.GL_PROJECTION)
@@ -571,24 +552,54 @@ void main() {
         GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
         GlStateManager.color(1f, 1f, 1f, 1f)
 
-        GL11.glDisable(GL11.GL_SCISSOR_TEST)
-        withClipping(clip, {
-            GlStateManager.pushMatrix()
-            GlStateManager.loadIdentity()
-            GlStateManager.translate(0f, 0f, -2000f)
-            GL13.glActiveTexture(GL13.GL_TEXTURE0)
-            GlStateManager.bindTexture(fbo2.framebufferTexture)
-            drawFullscreenQuad(screenW, screenH)
-            GlStateManager.popMatrix()
-        })
+        // Mask the blur to the clip shape through the destination alpha channel rather
+        // than the stencil buffer, which the main framebuffer does not have (and which
+        // cannot be added without recreating it and its colour texture).
+        // 1. Punch the clip shape into alpha only, leaving RGB untouched.
+        GlStateManager.disableTexture2D()
+        GlStateManager.colorMask(false, false, false, true)
+        GlStateManager.enableBlend()
+        GlStateManager.tryBlendFuncSeparate(GL11.GL_ONE, GL11.GL_ZERO, GL11.GL_ONE, GL11.GL_ZERO)
+        GlStateManager.color(0f, 0f, 0f, 0f)
+        drawFullscreenQuad(screenW, screenH)
+        GlStateManager.color(1f, 1f, 1f, 1f)
+        clip()
+
+        // 2. Draw the blur where that alpha is set.
+        GlStateManager.colorMask(true, true, true, false)
+        GlStateManager.enableTexture2D()
+        GlStateManager.tryBlendFuncSeparate(GL11.GL_DST_ALPHA, GL11.GL_ONE_MINUS_DST_ALPHA, GL11.GL_ZERO, GL11.GL_ONE)
+        GlStateManager.pushMatrix()
+        GlStateManager.loadIdentity()
+        GlStateManager.translate(0f, 0f, -2000f)
+        GL13.glActiveTexture(GL13.GL_TEXTURE0)
+        GlStateManager.bindTexture(fbo2.framebufferTexture)
+        drawFullscreenQuad(screenW, screenH)
+        GlStateManager.popMatrix()
+
+        // 3. Restore alpha to opaque so later passes are unaffected.
+        GlStateManager.disableTexture2D()
+        GlStateManager.colorMask(false, false, false, true)
+        GlStateManager.tryBlendFuncSeparate(GL11.GL_ONE, GL11.GL_ZERO, GL11.GL_ONE, GL11.GL_ZERO)
+        GlStateManager.color(0f, 0f, 0f, 1f)
+        drawFullscreenQuad(screenW, screenH)
+        GlStateManager.colorMask(true, true, true, true)
+        GlStateManager.color(1f, 1f, 1f, 1f)
+        GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
 
         if (blend) GlStateManager.enableBlend() else GlStateManager.disableBlend()
         if (depth) GlStateManager.enableDepth() else GlStateManager.disableDepth()
         if (texture) GlStateManager.enableTexture2D() else GlStateManager.disableTexture2D()
         if (lighting) GlStateManager.enableLighting() else GlStateManager.disableLighting()
-        if (scissor) GL11.glEnable(GL11.GL_SCISSOR_TEST)
-        if (stencil) GL11.glEnable(GL11.GL_STENCIL_TEST)
         if (cull) GlStateManager.enableCull()
+        // Re-apply the active clip rectangle, not just the enable bit, since this
+        // function reset the scissor box while compositing.
+        val activeClip = clipStack.peek()
+        if (activeClip != null) {
+            applyClip(activeClip[0], activeClip[1], activeClip[2], activeClip[3])
+        } else if (scissor) {
+            GL11.glEnable(GL11.GL_SCISSOR_TEST)
+        }
         GlStateManager.color(1f, 1f, 1f, 1f)
     }
 
@@ -743,14 +754,7 @@ void main() {
         GlStateManager.scale(x, y, 1f)
     }
 
-    @JvmStatic
-    fun ensureStencil() {
-        val fbo = mc.framebuffer
-        if (!fbo.isStencilEnabled) {
-            fbo.enableStencil()
-            fbo.bindFramebuffer(true)
-        }
-    }
+
 
     private fun drawArc(cx: Float, cy: Float, radius: Float, startAngle: Float, endAngle: Float, segments: Int) {
         for (i in 0..segments) {
@@ -800,31 +804,45 @@ void main() {
         return glyph.advance
     }
 
-    private fun formatCode(code: Char, fallback: Int): Int = when (code) {
-        '0' -> 0xFF000000.toInt()
-        '1' -> 0xFF0000AA.toInt()
-        '2' -> 0xFF00AA00.toInt()
-        '3' -> 0xFF00AAAA.toInt()
-        '4' -> 0xFFAA0000.toInt()
-        '5' -> 0xFFAA00AA.toInt()
-        '6' -> 0xFFFFAA00.toInt()
-        '7' -> 0xFFAAAAAA.toInt()
-        '8' -> 0xFF555555.toInt()
-        '9' -> 0xFF5555FF.toInt()
-        'a', 'A' -> 0xFF55FF55.toInt()
-        'b', 'B' -> 0xFF55FFFF.toInt()
-        'c', 'C' -> 0xFFFF5555.toInt()
-        'd', 'D' -> 0xFFFF55FF.toInt()
-        'e', 'E' -> 0xFFFFFF55.toInt()
-        'f', 'F' -> 0xFFFFFFFF.toInt()
-        'r', 'R' -> fallback
-        else -> fallback
+    private fun formatCode(code: Char, fallback: Int): Int {
+        val baseRgb: Int = when (code) {
+            '0' -> 0x000000
+            '1' -> 0x0000AA
+            '2' -> 0x00AA00
+            '3' -> 0x00AAAA
+            '4' -> 0xAA0000
+            '5' -> 0xAA00AA
+            '6' -> 0xFFAA00
+            '7' -> 0xAAAAAA
+            '8' -> 0x555555
+            '9' -> 0x5555FF
+            'a', 'A' -> 0x55FF55
+            'b', 'B' -> 0x55FFFF
+            'c', 'C' -> 0xFF5555
+            'd', 'D' -> 0xFF55FF
+            'e', 'E' -> 0xFFFF55
+            'f', 'F' -> 0xFFFFFF
+            'r', 'R' -> return fallback
+            else     -> return fallback
+        }
+        // tint: multiply each channel of the format colour by the corresponding
+        // channel of `fallback` (white = no tint, red = keep only red channel)
+        val tr = (fallback shr 16 and 0xFF)
+        val tg = (fallback shr 8  and 0xFF)
+        val tb = (fallback        and 0xFF)
+        val ta = (fallback shr 24 and 0xFF)
+        val r = (baseRgb shr 16 and 0xFF) * tr / 255
+        val g = (baseRgb shr 8  and 0xFF) * tg / 255
+        val b = (baseRgb        and 0xFF) * tb / 255
+        return (ta shl 24) or (r shl 16) or (g shl 8) or b
     }
 
     private fun gradientState() {
         GlStateManager.enableBlend()
         GlStateManager.disableTexture2D()
         GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
+        GlStateManager.disableCull()
+        GlStateManager.disableDepth()
         GL11.glShadeModel(GL11.GL_SMOOTH)
     }
 
@@ -832,6 +850,7 @@ void main() {
         GlStateManager.color(1f, 1f, 1f, 1f)
         GlStateManager.enableTexture2D()
         GlStateManager.disableBlend()
+        GL11.glShadeModel(GL11.GL_FLAT)
     }
 
     private fun glColor(color: Int) {

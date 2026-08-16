@@ -3,11 +3,16 @@ package adreno.myauclickgui.feature.gui
 import adreno.myauclickgui.MyauClickGui
 import adreno.myauclickgui.feature.managers.ChatManager
 import adreno.myauclickgui.feature.types.fonts.Fonts
+import adreno.myauclickgui.feature.types.logs.LogInfo
 import adreno.myauclickgui.feature.types.module.Module
 import adreno.myauclickgui.feature.types.module.settings.BooleanSetting
 import adreno.myauclickgui.feature.types.module.settings.ColorSetting
+import adreno.myauclickgui.feature.types.module.settings.FloatSetting
+import adreno.myauclickgui.feature.types.module.settings.HideSetting
+import adreno.myauclickgui.feature.types.module.settings.IntSetting
 import adreno.myauclickgui.feature.types.module.settings.ModeSetting
 import adreno.myauclickgui.feature.types.module.settings.NumberSetting
+import adreno.myauclickgui.feature.types.module.settings.PercentSetting
 import adreno.myauclickgui.feature.types.module.settings.Setting
 import adreno.myauclickgui.feature.utils.EaseInOut
 import adreno.myauclickgui.feature.utils.EaseOut
@@ -26,6 +31,7 @@ import java.awt.datatransfer.StringSelection
 import java.util.Random
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 object GuiClickGui : GuiScreen() {
     private val mod = MyauClickGui.getInstance()
@@ -35,11 +41,50 @@ object GuiClickGui : GuiScreen() {
     override fun initGui() {
         SoundUtil.playDirect(sound)
         super.initGui()
+        swallowOpenKeys = true
         if (mod.modules.isEmpty()) {
             loadingModules = true
             chat?.loadModules()
+        } else {
+            chat?.loadModuleStates()
         }
         chat?.loadConfigs()
+        // Some modules gain or lose settings at runtime, so refresh whatever panel is
+        // still open from last time.
+        configuringModule?.let { reloadSettings(it) }
+    }
+
+    /**
+     * (Re)loads [module]'s settings. When it already has settings on screen the reload
+     * runs silently in the background and swaps them in when done, so the panel stays
+     * usable instead of flashing the loading placeholder.
+     */
+    private fun reloadSettings(module: Module) {
+        val silent = module.settings.isNotEmpty()
+        silentSettingsReload = silent
+        Thread({
+            val settings = chat!!.loadSettingsForModule(module) { s ->
+                if (!silent) loadingSettingsSuffix = s
+            }
+            mc.addScheduledTask {
+                if (settings.isNotEmpty()) {
+                    module.settings = withHideSetting(module, settings)
+                    switchXMap.clear()
+                    switchBgMap.clear()
+                }
+                silentSettingsReload = false
+            }
+        }, "MyauClickGui-${module.name}SettingsGetter")
+            .apply { isDaemon = true }.start()
+    }
+
+    /** Prepends the synthetic "Hide" toggle that drives Myau's .show/.hide commands. */
+    private fun withHideSetting(module: Module, settings: ArrayList<Setting<*>>): ArrayList<Setting<*>> {
+        if (settings.firstOrNull() is HideSetting) return settings
+        val combined = ArrayList<Setting<*>>(settings.size + 1)
+        combined.add(HideSetting(module))
+        combined.addAll(settings)
+        return combined
     }
 
     private var searchTyping: Boolean = false
@@ -71,6 +116,9 @@ object GuiClickGui : GuiScreen() {
     private val switchXMap = LinkedHashMap<BooleanSetting, EaseInOut>()
     private val switchBgMap = LinkedHashMap<BooleanSetting, SmoothColor>()
     private val sliderXMap = LinkedHashMap<NumberSetting, EaseInOut>()
+    private val intSliderXMap = LinkedHashMap<IntSetting, EaseInOut>()
+    private val floatSliderXMap = LinkedHashMap<FloatSetting, EaseInOut>()
+    private val percentSliderXMap = LinkedHashMap<PercentSetting, EaseInOut>()
     private val modeSettingExpend = LinkedHashMap<ModeSetting, EaseInOut>()
     private val modeSettingVLine = LinkedHashMap<ModeSetting, EaseOut>()
     private val colorSettingExpend = LinkedHashMap<ColorSetting, EaseInOut>()
@@ -78,6 +126,9 @@ object GuiClickGui : GuiScreen() {
     private val expandedColors = HashSet<ColorSetting>()
     private var draggingModule: Module? = null
     private var draggingNumber: NumberSetting? = null
+    private var draggingInt: IntSetting? = null
+    private var draggingFloat: FloatSetting? = null
+    private var draggingPercent: PercentSetting? = null
     private var draggingColor: ColorSetting? = null
     private var colorDragMode: ColorDragMode? = null
     private var colorDragH = 0f
@@ -86,7 +137,6 @@ object GuiClickGui : GuiScreen() {
     private var colorDragValue = 0xFFFFFFFF.toInt()
     private var dragTrackX = 0f
     private var dragTrackW = 0f
-    private var lastLogSize: Int = 0
     private val logOffset = EaseInOut(0.2f, 3)
     private val logBgWidth = EaseInOut(0.3f, 2)
     private val logHeights: ArrayDeque<Float> = ArrayDeque()
@@ -102,6 +152,12 @@ object GuiClickGui : GuiScreen() {
 
     private var loadingModules = false
     private var loadingSettingsSuffix = ""
+    // The keypress that opened this screen also reaches keyTyped; swallow input until
+    // every key held at open time has been released.
+    private var swallowOpenKeys = true
+    // Set while settings are being refreshed in the background for a module that
+    // already has values on screen, so the loading placeholder stays hidden.
+    private var silentSettingsReload = false
 
     init {
         leftColor.targetColor = 0x2A1F085C.toInt()
@@ -210,40 +266,61 @@ object GuiClickGui : GuiScreen() {
                 configurationScroll.targetValue += offset
         }
 
-        val logsSnapshot: List<String>
+        val logsSnapshot: List<LogInfo>
         synchronized(mod.logs) {
-            logsSnapshot = ArrayList(mod.logs)
-            val newCount = logsSnapshot.size - lastLogSize
-            if (newCount > 0) {
-                var added = 0f
-                for (i in lastLogSize until logsSnapshot.size) {
-                    val h = RenderUtil.getTextHeight(logsSnapshot[i], Fonts.HarmonyOS, 6f).toFloat()
-                    logHeights.addLast(h)
-                    added += h
-                }
-                if (added > 0f) {
-                    logOffset.targetValue += added
-                }
-            } else if (newCount < 0) {
-                repeat(-newCount) { if (logHeights.isNotEmpty()) logHeights.removeFirst() }
-                var total = 0f
-                for (h in logHeights) total += h
-                logOffset.targetValue = total
+            // Entries only ever leave from the front: expiry below and the size cap in
+            // ChatUtil.clog both removeFirst. Track the height they take with them so the
+            // bottom-anchored stack can be shifted by the same amount.
+            var removedHeight = 0f
+
+            // remove entries older than 10 seconds
+            val expireNs = 10_000_000_000L
+            while (mod.logs.isNotEmpty() && System.nanoTime() - mod.logs.peekFirst().initTime > expireNs) {
+                mod.logs.removeFirst()
+                if (logHeights.isNotEmpty()) removedHeight += logHeights.removeFirst()
             }
-            lastLogSize = logsSnapshot.size
+            // Catch up on entries dropped by the size cap outside this block.
+            while (logHeights.size > mod.logs.size) {
+                removedHeight += logHeights.removeFirst()
+            }
+
+            logsSnapshot = ArrayList(mod.logs)
+
+            // Measure entries appended since the last frame; they extend the tail.
+            var addedHeight = 0f
+            for (i in logHeights.size until logsSnapshot.size) {
+                val h = RenderUtil.getTextHeight(logsSnapshot[i].content, Fonts.HarmonyOS, 6f).toFloat()
+                logHeights.addLast(h)
+                addedHeight += h
+            }
+
+            // Removing from the front shortens the stack at the top. Shrinking the offset
+            // and the anchor together leaves the surviving entries where they already are,
+            // instead of snapping them up by the removed height and easing back down.
+            if (removedHeight > 0f) {
+                val settled = logOffset.currentValue
+                logOffset.targetValue = max(0f, logOffset.targetValue - removedHeight)
+                logOffset.currentValue = max(0f, settled - removedHeight)
+            }
+            if (addedHeight > 0f) {
+                logOffset.targetValue += addedHeight
+            }
 
             var maxWidth = 0f
-            var ly = sr.scaledHeight - logOffset.currentValue + RenderUtil.getTextHeight(Fonts.HarmonyOS, 6f)
+            var ly = sr.scaledHeight - logOffset.currentValue
             RenderUtil.renderBlur({
-                    RenderUtil.drawRoundedRect(0f, ly - 5f, logBgWidth.currentValue + 10f, sr.scaledHeight.toFloat(), 0f, 5f, 0f, 0f, -1)
+                    RenderUtil.drawRoundedRect(0f, max(ly - 15f, 0f), logBgWidth.currentValue + 10f, sr.scaledHeight.toFloat(), 0f, 5f, 0f, 0f, -1)
                 }, 32)
-            RenderUtil.drawRoundedRect(0f, ly - 5f, logBgWidth.currentValue + 10f, sr.scaledHeight.toFloat(), 0f, 5f, 0f, 0f, 0xD5070312.toInt())
+            RenderUtil.drawRoundedRect(0f, max(ly - 15f, 0f), logBgWidth.currentValue + 10f, sr.scaledHeight.toFloat(), 0f, 5f, 0f, 0f, 0xD5070312.toInt())
             for ((log, h) in logsSnapshot.asSequence().zip(logHeights.asSequence())) {
                 if (ly >= sr.scaledHeight) break
                 if (ly + h > 0f) {
-                    RenderUtil.drawTextWithFormatting(log, 5f, ly, Fonts.HarmonyOS, 6f, -1)
+                    val elapsed = (System.nanoTime() - log.initTime) / 1_000_000_000f
+                    val alpha = min(1f, elapsed / 0.5f) * (1f - max(0f, (elapsed - 9f) / 1f))
+                    RenderUtil.drawTextWithFormatting(log.content, 5f, ly, Fonts.HarmonyOS, 6f,
+                        RenderUtil.getRGB(1f, 1f, 1f, alpha))
                 }
-                maxWidth = max(maxWidth, RenderUtil.getTextWidth(log, Fonts.HarmonyOS, 6f))
+                maxWidth = max(maxWidth, RenderUtil.getTextWidth(log.content, Fonts.HarmonyOS, 6f))
                 ly += h
             }
             logBgWidth.targetValue = maxWidth
@@ -264,9 +341,7 @@ object GuiClickGui : GuiScreen() {
             RenderUtil.drawTextVCenter("Search...", x + sw * 0.025f, y + searchHeight / 2f, Fonts.HarmonyOS, 6f, RenderUtil.getRGB(225, 225, 225, (225 * placeAlpha.currentValue).toInt()))
         cursorX.targetValue = searchTWidth + 0.7f
         if (searchText.isNotEmpty() || searchTyping)
-            RenderUtil.withClipping({
-                RenderUtil.drawRect(typingX, y, typingWidth - 4f, searchHeight, -1)
-            }, {
+            RenderUtil.withClipping(typingX, y, typingWidth - 4f, searchHeight) {
                 val range = searchSelectRange
                 if (range != null && range.first < range.last) {
                     selectLeft.targetValue = textWidths[range.first]
@@ -278,7 +353,7 @@ object GuiClickGui : GuiScreen() {
                 RenderUtil.drawRect(typingX + cursorX.currentValue + searchScroll.currentValue, y + (searchHeight - searchTHeight) / 2f, 1f, searchTHeight,
                     RenderUtil.getRGB(245, 248, 255, (255 * cursorAlpha.currentValue).toInt()))
                 RenderUtil.drawTextVCenter(searchText, typingX + searchScroll.currentValue, y + searchHeight / 2f, Fonts.HarmonyOS, 6f, -1)
-            })
+            }
         if (loadingModules)
             RenderUtil.drawTextCenter("Loading modules...", x + lWidth / 2f,
                 y + searchHeight + (sHeight - searchHeight) / 2f, Fonts.HarmonyOS, 6f, -1)
@@ -289,9 +364,7 @@ object GuiClickGui : GuiScreen() {
             var dy = y + searchHeight + 5 + moduleScroll.currentValue - cHeight - vGap
             val listTop = y + searchHeight
             val listBottom = y + sHeight
-            RenderUtil.withClipping({
-                RenderUtil.drawRoundedRect(x, y + searchHeight, lWidth, sHeight - searchHeight, 0f, 0f, 8f, 8f, -1)
-            }, {
+            RenderUtil.withClipping(x, y + searchHeight, lWidth, sHeight - searchHeight) {
                 updateSearchRanking()
                 for (module in shownModules) {
                     val open = moduleOpenMap.getOrPut(module, { EaseInOut(0.3f, 3) })
@@ -335,15 +408,15 @@ object GuiClickGui : GuiScreen() {
                             configuringModule = module
                             draggingModule = null
                             draggingNumber = null
+                            draggingInt = null
+                            draggingFloat = null
+                            draggingPercent = null
                             draggingColor = null
                             colorDragMode = null
                             switchXMap.clear()
                             switchBgMap.clear()
-                            Thread({
-                                val settings = chat!!.loadSettingsForModule(module) { s -> loadingSettingsSuffix = s }
-                                configuringModule?.takeIf { it.settings.isEmpty() }?.also { it.settings = settings }
-                            }, "MyauClickGui-${module.name}SettingsGetter")
-                                .apply { isDaemon = true }.start()
+                            configurationScroll.targetValue = 0f
+                            reloadSettings(module)
                         }
                     }
                     RenderUtil.drawRoundedRect(
@@ -352,7 +425,7 @@ object GuiClickGui : GuiScreen() {
                     )
                     RenderUtil.drawTextCenter(module.name, x + lWidth / 2f, dy + 12.5f, Fonts.HarmonyOS, 6f, -1)
                 }
-            })
+            }
             dy = y + searchHeight + 5 + moduleScroll.currentValue - cHeight - vGap
             for (module in shownModules) {
                 val open = moduleOpenMap.getOrPut(module, { EaseInOut(0.3f, 3) })
@@ -363,28 +436,21 @@ object GuiClickGui : GuiScreen() {
                 }
                 val leftR = open.currentValue * cHeight / 2f
                 val rightR = cHeight / 2f - leftR
-                RenderUtil.withClipping({
-                    RenderUtil.drawRoundedRect(x, y + searchHeight, lWidth, sHeight - searchHeight, 0f, 0f, 8f, 8f, -1)
-                }, {
-                    RenderUtil.withClipping({
-                        RenderUtil.drawRoundedRect(
-                            x + open.currentValue * hGap, dy, lWidth - hGap, 25f,
-                            leftR, rightR, rightR, leftR, -1
-                        )
-                    }, {
+                RenderUtil.withClipping(x, y + searchHeight, lWidth, sHeight - searchHeight) {
+                    RenderUtil.withClipping(x + open.currentValue * hGap, dy, lWidth - hGap, 25f) {
                         RenderUtil.drawHorizontalGradientRect(x, dy, hGap, 25f, 0xC1B22949.toInt(), 0x00000000.toInt())
                         RenderUtil.drawHorizontalGradientRect(x + lWidth - hGap, dy, hGap, 25f, 0x00000000.toInt(), 0xC1109B3E.toInt())
-                    })
-                })
+                    }
+                }
             }
         }
         if (mouseButton == 0 && !RenderUtil.isInside(x, y, lWidth + rWidth, sHeight, 8f, mouseX.toFloat(), mouseY.toFloat())) {
             configuringModule = null
         }
-        RenderUtil.withClipping({
-            RenderUtil.drawRoundedRect(x + lWidth, y, rWidth, sHeight, 8f, 0f, 0f, 8f, -1)
-        }, {
-            if (loadingSettingsSuffix.isNotEmpty()) {
+        RenderUtil.withClipping(x + lWidth, y, rWidth, sHeight) {
+            // A silent reload keeps the current values on screen, so only show the
+            // placeholder when there is nothing to display yet.
+            if (loadingSettingsSuffix.isNotEmpty() && !silentSettingsReload) {
                 RenderUtil.drawTextCenter(
                     "Loading settings...  ($loadingSettingsSuffix)",
                     x + lWidth + rWidth / 2f,
@@ -417,8 +483,13 @@ object GuiClickGui : GuiScreen() {
                         }
                     })
                     if (mouseButton == 0 && inPanel && RenderUtil.isInside(baseX, baseY, 40f, 22f, 11f, mx, my)) {
-                        setting.value = !setting.value
-                        ChatManager.setValue(module, setting, setting.value)
+                        val newValue = !setting.value
+                        if (setting is HideSetting) {
+                            ChatManager.setValue(setting, newValue)
+                        } else {
+                            setting.value = newValue
+                            ChatManager.setValue(module, setting, newValue)
+                        }
                     }
                     switchX.targetValue = if (setting.value) 20f else 2f
                     switchBg.targetColor = if (setting.value) switchOnColor else switchOffColor
@@ -469,9 +540,7 @@ object GuiClickGui : GuiScreen() {
                         sy + 12.5f, Fonts.HarmonyOS, 5f, 0xBFFFFFFF.toInt()
                     )
                     if (progress > 0f) {
-                        RenderUtil.withClipping({
-                            RenderUtil.drawRect(sx, sy + 25f, rowWidth, progress * totalExpandH, -1)
-                        }, {
+                        RenderUtil.withClipping(sx, sy + 25f, rowWidth, progress * totalExpandH) {
                             for ((index, mode) in setting.modes.withIndex()) {
                                 val rowY = sy + 25f + index * 20f
                                 RenderUtil.drawRect(modeX, rowY, rowRight - modeX, 20f, switchOffColor)
@@ -485,20 +554,46 @@ object GuiClickGui : GuiScreen() {
                                 modeX, sy + 25f + totalExpandH - 1f, rowRight - modeX, 1f,
                                 RenderUtil.alpha(themeColor, progress)
                             )
-                        })
+                        }
                     }
+                }
+
+                // Reserves a fixed-width slot for the live value label so the track does
+                // not shift horizontally while the value changes during a drag.
+                fun sliderLayout(name: String, minText: String, maxText: String, rangeText: String): Triple<Float, Float, Float> {
+                    val nameWidth = RenderUtil.getTextWidth(name, Fonts.HarmonyOS, 6f)
+                    val slotWidth = max(
+                        RenderUtil.getTextWidth(minText, Fonts.HarmonyOS, 4.5f),
+                        RenderUtil.getTextWidth(maxText, Fonts.HarmonyOS, 4.5f)
+                    )
+                    val rangeWidth = RenderUtil.getTextWidth(rangeText, Fonts.HarmonyOS, 4.5f)
+                    val valueSlotX = sx + nameWidth + 10f
+                    val trackX = valueSlotX + slotWidth + 8f
+                    val trackW = (sx + rowWidth - trackX - 5f - rangeWidth).coerceAtLeast(24f)
+                    return Triple(trackX, trackW, valueSlotX)
+                }
+
+                fun drawSliderRow(
+                    name: String, currentText: String, rangeText: String,
+                    valueSlotX: Float, trackX: Float, trackW: Float, sy: Float, sliderPos: Float
+                ) {
+                    val trackY = sy + 10.5f
+                    RenderUtil.drawTextVCenter(name, sx, sy + 12.5f, Fonts.HarmonyOS, 6f, -1)
+                    RenderUtil.drawTextVCenter(currentText, valueSlotX, sy + 12.5f, Fonts.HarmonyOS, 4.5f, -1)
+                    RenderUtil.drawTextVCenter(rangeText, trackX + trackW + 5f, sy + 12.5f, Fonts.HarmonyOS, 4.5f, 0x88FFFFFF.toInt())
+                    RenderUtil.drawRoundedRect(trackX, trackY, trackW, 4f, 2f, trackBaseColor)
+                    RenderUtil.withClipping(trackX, trackY, sliderPos, 4f) {
+                        RenderUtil.drawRoundedRect(trackX, trackY, trackW, 4f, 2f, themeColor)
+                    }
+                    RenderUtil.drawCircle(trackX + sliderPos, trackY + 2f, 5f, sliderColor)
                 }
 
                 fun renderNumberSetting(setting: NumberSetting, sy: Float) {
                     val decimals = ChatManager.numberDecimals(setting)
                     val minText = ChatManager.formatNumber(setting.range.first, decimals)
                     val maxText = ChatManager.formatNumber(setting.range.second, decimals)
-                    val nameWidth = RenderUtil.getTextWidth(setting.name, Fonts.HarmonyOS, 6f)
-                    val minWidth = RenderUtil.getTextWidth(minText, Fonts.HarmonyOS, 4.5f)
-                    val maxWidth = RenderUtil.getTextWidth(maxText, Fonts.HarmonyOS, 4.5f)
-                    val trackX = sx + nameWidth + 10f + minWidth + 5f
-                    val trackW = (sx + rowWidth - trackX - 5f - maxWidth).coerceAtLeast(24f)
-                    val trackY = sy + 10.5f
+                    val rangeText = "$minText-$maxText"
+                    val (trackX, trackW, valueSlotX) = sliderLayout(setting.name, minText, maxText, rangeText)
                     val range = setting.range.second - setting.range.first
                     val slider = sliderXMap.getOrPut(setting, { EaseInOut(0.3f, 3) })
 
@@ -523,16 +618,122 @@ object GuiClickGui : GuiScreen() {
                         slider.targetValue = pos
                     }
 
-                    RenderUtil.drawTextVCenter(setting.name, sx, sy + 12.5f, Fonts.HarmonyOS, 6f, -1)
-                    RenderUtil.drawTextVCenter(minText, sx + nameWidth + 10f, sy + 12.5f, Fonts.HarmonyOS, 4.5f, 0xAAFFFFFF.toInt())
-                    RenderUtil.drawTextVCenter(maxText, trackX + trackW + 5f, sy + 12.5f, Fonts.HarmonyOS, 4.5f, 0xAAFFFFFF.toInt())
-                    RenderUtil.drawRoundedRect(trackX, trackY, trackW, 4f, 2f, trackBaseColor)
-                    RenderUtil.withClipping({
-                        RenderUtil.drawRect(trackX, trackY, slider.currentValue, 4f, -1)
-                    }, {
-                        RenderUtil.drawRoundedRect(trackX, trackY, trackW, 4f, 2f, themeColor)
-                    })
-                    RenderUtil.drawCircle(trackX + slider.currentValue, trackY + 2f, 5f, sliderColor)
+                    val sliderPos = slider.currentValue
+                    // While dragging, derive the label from the live handle position.
+                    val liveValue = if (draggingNumber == setting && trackW > 0f)
+                        setting.range.first + sliderPos / trackW * range else setting.value
+                    val currentText = ChatManager.formatNumber(ChatManager.roundNumber(liveValue, decimals), decimals)
+                    drawSliderRow(setting.name, currentText, rangeText, valueSlotX, trackX, trackW, sy, sliderPos)
+                }
+
+                fun renderIntSetting(setting: IntSetting, sy: Float) {
+                    val minText = setting.range.first.toString()
+                    val maxText = setting.range.second.toString()
+                    val rangeText = "$minText-$maxText"
+                    val (trackX, trackW, valueSlotX) = sliderLayout(setting.name, minText, maxText, rangeText)
+                    val range = setting.range.second - setting.range.first
+                    val slider = intSliderXMap.getOrPut(setting) { EaseInOut(0.3f, 3) }
+
+                    if (draggingInt == setting) {
+                        if (Mouse.isButtonDown(0)) {
+                            val pos = (mx - trackX).coerceIn(0f, trackW)
+                            slider.currentValue = pos
+                            slider.targetValue = pos
+                        }
+                    } else {
+                        val target = if (range <= 0) 0f
+                            else ((setting.value - setting.range.first).toFloat() / range * trackW).coerceIn(0f, trackW)
+                        slider.targetValue = target
+                    }
+                    if (mouseButton == 0 && inPanel && RenderUtil.isInside(trackX, sy, trackW, 25f, mx, my)) {
+                        draggingModule = module
+                        draggingInt = setting
+                        dragTrackX = trackX
+                        dragTrackW = trackW
+                        val pos = (mx - trackX).coerceIn(0f, trackW)
+                        slider.currentValue = pos
+                        slider.targetValue = pos
+                    }
+
+                    val sliderPos = slider.currentValue
+                    val liveValue = if (draggingInt == setting && trackW > 0f)
+                        kotlin.math.round(setting.range.first + sliderPos / trackW * range).toInt()
+                            .coerceIn(setting.range.first, setting.range.second)
+                        else setting.value
+                    drawSliderRow(setting.name, liveValue.toString(), rangeText, valueSlotX, trackX, trackW, sy, sliderPos)
+                }
+
+                fun renderFloatSetting(setting: FloatSetting, sy: Float) {
+                    val decimals = ChatManager.numberDecimals(setting)
+                    val minText = ChatManager.formatNumber(setting.range.first, decimals)
+                    val maxText = ChatManager.formatNumber(setting.range.second, decimals)
+                    val rangeText = "$minText-$maxText"
+                    val (trackX, trackW, valueSlotX) = sliderLayout(setting.name, minText, maxText, rangeText)
+                    val range = setting.range.second - setting.range.first
+                    val slider = floatSliderXMap.getOrPut(setting) { EaseInOut(0.3f, 3) }
+
+                    if (draggingFloat == setting) {
+                        if (Mouse.isButtonDown(0)) {
+                            val pos = (mx - trackX).coerceIn(0f, trackW)
+                            slider.currentValue = pos
+                            slider.targetValue = pos
+                        }
+                    } else {
+                        val target = if (range <= 0f) 0f
+                            else ((setting.value - setting.range.first) / range * trackW).coerceIn(0f, trackW)
+                        slider.targetValue = target
+                    }
+                    if (mouseButton == 0 && inPanel && RenderUtil.isInside(trackX, sy, trackW, 25f, mx, my)) {
+                        draggingModule = module
+                        draggingFloat = setting
+                        dragTrackX = trackX
+                        dragTrackW = trackW
+                        val pos = (mx - trackX).coerceIn(0f, trackW)
+                        slider.currentValue = pos
+                        slider.targetValue = pos
+                    }
+
+                    val sliderPos = slider.currentValue
+                    val liveValue = if (draggingFloat == setting && trackW > 0f)
+                        setting.range.first + sliderPos / trackW * range else setting.value
+                    val currentText = ChatManager.formatNumber(ChatManager.roundNumber(liveValue, decimals), decimals)
+                    drawSliderRow(setting.name, currentText, rangeText, valueSlotX, trackX, trackW, sy, sliderPos)
+                }
+
+                fun renderPercentSetting(setting: PercentSetting, sy: Float) {
+                    val minText = "${kotlin.math.round(setting.range.first).toLong()}%"
+                    val maxText = "${kotlin.math.round(setting.range.second).toLong()}%"
+                    val rangeText = "$minText-$maxText"
+                    val (trackX, trackW, valueSlotX) = sliderLayout(setting.name, minText, maxText, rangeText)
+                    val range = setting.range.second - setting.range.first
+                    val slider = percentSliderXMap.getOrPut(setting) { EaseInOut(0.3f, 3) }
+
+                    if (draggingPercent == setting) {
+                        if (Mouse.isButtonDown(0)) {
+                            val pos = (mx - trackX).coerceIn(0f, trackW)
+                            slider.currentValue = pos
+                            slider.targetValue = pos
+                        }
+                    } else {
+                        val target = if (range <= 0f) 0f
+                            else ((setting.value - setting.range.first) / range * trackW).coerceIn(0f, trackW)
+                        slider.targetValue = target
+                    }
+                    if (mouseButton == 0 && inPanel && RenderUtil.isInside(trackX, sy, trackW, 25f, mx, my)) {
+                        draggingModule = module
+                        draggingPercent = setting
+                        dragTrackX = trackX
+                        dragTrackW = trackW
+                        val pos = (mx - trackX).coerceIn(0f, trackW)
+                        slider.currentValue = pos
+                        slider.targetValue = pos
+                    }
+
+                    val sliderPos = slider.currentValue
+                    val liveValue = if (draggingPercent == setting && trackW > 0f)
+                        setting.range.first + sliderPos / trackW * range else setting.value
+                    val currentText = "${kotlin.math.round(liveValue).toLong()}%"
+                    drawSliderRow(setting.name, currentText, rangeText, valueSlotX, trackX, trackW, sy, sliderPos)
                 }
 
                 fun renderColorSetting(setting: ColorSetting, sy: Float) {
@@ -601,9 +802,7 @@ object GuiClickGui : GuiScreen() {
                     RenderUtil.drawRoundedRect(blockX, blockY, 10f, 10f, 2f, displayColor)
 
                     if (clipH > 0f) {
-                        RenderUtil.withClipping({
-                            RenderUtil.drawRect(pickerX, pickerY, sqSize + barW + 8f, clipH, -1)
-                        }, {
+                        RenderUtil.withClipping(pickerX, pickerY, sqSize + barW + 8f, clipH) {
                             RenderUtil.drawHorizontalGradientRect(pickerX,
                                 pickerY, sqSize, sqSize, sliderColor, hsvToRgb(h, 1f, 1f))
                             RenderUtil.drawVerticalGradientRect(pickerX, pickerY, sqSize, sqSize, 0x00000000, 0xFF000000.toInt())
@@ -622,7 +821,7 @@ object GuiClickGui : GuiScreen() {
                             }
                             val hueY = (pickerY + h / 360f * sqSize).coerceIn(pickerY + 1f, pickerY + sqSize - 1f)
                             RenderUtil.drawRect(barX - 2f, hueY - 1f, barW + 4f, 2f, sliderColor)
-                        })
+                        }
                     }
                 }
 
@@ -635,6 +834,9 @@ object GuiClickGui : GuiScreen() {
                             25f + modeExpend.currentValue * 20f * setting.modes.size
                         }
                         is NumberSetting -> 25f
+                        is IntSetting -> 25f
+                        is FloatSetting -> 25f
+                        is PercentSetting -> 25f
                         is ColorSetting -> {
                             val colorExpend = colorSettingExpend.getOrPut(setting, { EaseInOut(0.3f, 3) })
                             25f + colorExpend.currentValue * 150f
@@ -649,13 +851,16 @@ object GuiClickGui : GuiScreen() {
                         is BooleanSetting -> renderBooleanSetting(setting, sy)
                         is ModeSetting -> renderModeSetting(setting, sy)
                         is NumberSetting -> renderNumberSetting(setting, sy)
+                        is IntSetting -> renderIntSetting(setting, sy)
+                        is FloatSetting -> renderFloatSetting(setting, sy)
+                        is PercentSetting -> renderPercentSetting(setting, sy)
                         is ColorSetting -> renderColorSetting(setting, sy)
                     }
                     sy += settingHeight
                 }
             }
-        })
-        if (release || ((draggingNumber != null || draggingColor != null) && !Mouse.isButtonDown(0))) {
+        }
+        if (release || ((draggingNumber != null || draggingInt != null || draggingFloat != null || draggingPercent != null || draggingColor != null) && !Mouse.isButtonDown(0))) {
             val dragModule = draggingModule
             val dragNum = draggingNumber
             if (dragNum != null && dragModule != null) {
@@ -666,12 +871,42 @@ object GuiClickGui : GuiScreen() {
                 dragNum.value = finalValue
                 ChatManager.setValue(dragModule, dragNum, finalValue)
             }
+            val dragInt = draggingInt
+            if (dragInt != null && dragModule != null) {
+                val slider = intSliderXMap[dragInt]
+                val range = dragInt.range.second - dragInt.range.first
+                val pos = (slider?.currentValue ?: 0f).coerceIn(0f, dragTrackW)
+                val finalValue = if (range > 0) (dragInt.range.first + pos / dragTrackW * range).toInt().coerceIn(dragInt.range.first, dragInt.range.second) else dragInt.range.first
+                dragInt.value = finalValue
+                ChatManager.setValue(dragModule, dragInt, finalValue)
+            }
+            val dragFloat = draggingFloat
+            if (dragFloat != null && dragModule != null) {
+                val slider = floatSliderXMap[dragFloat]
+                val range = dragFloat.range.second - dragFloat.range.first
+                val pos = (slider?.currentValue ?: 0f).coerceIn(0f, dragTrackW)
+                val finalValue = if (range > 0f) dragFloat.range.first + pos / dragTrackW * range else dragFloat.range.first
+                dragFloat.value = finalValue
+                ChatManager.setValue(dragModule, dragFloat, finalValue)
+            }
+            val dragPct = draggingPercent
+            if (dragPct != null && dragModule != null) {
+                val slider = percentSliderXMap[dragPct]
+                val range = dragPct.range.second - dragPct.range.first
+                val pos = (slider?.currentValue ?: 0f).coerceIn(0f, dragTrackW)
+                val finalValue = if (range > 0f) dragPct.range.first + pos / dragTrackW * range else dragPct.range.first
+                dragPct.value = finalValue
+                ChatManager.setValue(dragModule, dragPct, finalValue)
+            }
             val dragCol = draggingColor
             if (dragCol != null && dragModule != null) {
                 dragCol.value = colorDragValue
                 ChatManager.setValue(dragModule, dragCol, colorDragValue)
             }
             draggingNumber = null
+            draggingInt = null
+            draggingFloat = null
+            draggingPercent = null
             draggingColor = null
             colorDragMode = null
             draggingModule = null
@@ -690,6 +925,16 @@ object GuiClickGui : GuiScreen() {
     }
 
     override fun keyTyped(typedChar: Char, keyCode: Int) {
+        // The key that opened this screen is still down and would otherwise be typed
+        // into the search box. Ignore input until it is released.
+        if (swallowOpenKeys) {
+            if (Keyboard.isKeyDown(keyCode)) {
+                super.keyTyped(typedChar, keyCode)
+                return
+            }
+            swallowOpenKeys = false
+        }
+        val textBefore = searchText
         val ctrl = Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL)
         if (ctrl) {
             when (keyCode) {
@@ -762,6 +1007,10 @@ object GuiClickGui : GuiScreen() {
             }
             searchSelectRange = null
             selectAnchor = null
+        }
+        // A changed query reorders the list, so animate it back to the top.
+        if (searchText != textBefore) {
+            moduleScroll.targetValue = 0f
         }
         super.keyTyped(typedChar, keyCode)
     }
@@ -977,9 +1226,15 @@ object GuiClickGui : GuiScreen() {
         super.onGuiClosed()
         searchTyping = false
         draggingNumber = null
+        draggingInt = null
+        draggingFloat = null
+        draggingPercent = null
         draggingColor = null
         colorDragMode = null
         draggingModule = null
+        // Clean up any clip state left over by an aborted frame (e.g. exception
+        // thrown inside withClipping).
+        RenderUtil.resetClipState()
     }
 
     override fun doesGuiPauseGame(): Boolean {
