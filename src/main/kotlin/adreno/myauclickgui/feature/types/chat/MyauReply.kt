@@ -1,3 +1,2 @@
-package adreno.myauclickgui.feature.types.chat
-
+﻿package adreno.myauclickgui.feature.types.chat
 abstract class MyauReply

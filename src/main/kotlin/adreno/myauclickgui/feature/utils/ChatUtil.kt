@@ -1,5 +1,4 @@
-package adreno.myauclickgui.feature.utils
-
+﻿package adreno.myauclickgui.feature.utils
 import adreno.myauclickgui.MyauClickGui
 import adreno.myauclickgui.feature.types.chat.ErrorReply
 import adreno.myauclickgui.feature.types.chat.MyauReply
@@ -16,10 +15,8 @@ import java.util.Queue
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-
 object ChatUtil {
     private val mc = Minecraft.getMinecraft()
-
     private val mod = MyauClickGui.getInstance()
     private val formatted = ArrayList<String>()
     private val unformatted = ArrayList<String>()
@@ -29,12 +26,10 @@ object ChatUtil {
     private var listening = false
     private val queue: Queue<PendingRequest> = ArrayDeque()
     private val sound = ResourceLocation("minecraft", "random.orb")
-
     private class PendingRequest(
         val prompt: String,
         val future: CompletableFuture<MyauReply>
     )
-
     fun getMyauReply(prompt: String): MyauReply {
         clog(prompt)
         check(!mc.isCallingFromMinecraftThread) {
@@ -58,18 +53,15 @@ object ChatUtil {
             ErrorReply(e.stackTrace.contentToString())
         }
     }
-
     private fun startCollect(prompt: String, future: CompletableFuture<MyauReply>) {
         formatted.clear()
         unformatted.clear()
         listening = true
         mc.addScheduledTask { mc.thePlayer!!.sendChatMessage(prompt) }
-
         scheduler.schedule({
             mc.addScheduledTask { finishCollect(prompt, future) }
-        }, 90L, TimeUnit.MILLISECONDS)
+        }, 50L, TimeUnit.MILLISECONDS)
     }
-
     private fun finishCollect(prompt: String, future: CompletableFuture<MyauReply>) {
         var next: PendingRequest? = null
         synchronized(this) {
@@ -83,9 +75,8 @@ object ChatUtil {
         if (pending != null)
             startCollect(pending.prompt, pending.future)
     }
-
     @JvmStatic
-    fun onChatMessage(component: IChatComponent, chatLineId: Int): Boolean { // hooked by mixin
+    fun onChatMessage(component: IChatComponent, chatLineId: Int): Boolean {
         val fmt = component.formattedText
         val plain = fmt.replace(Regex("§."), "")
         val match = plain.startsWith("[Myau]") || plain.startsWith("»")
@@ -98,7 +89,6 @@ object ChatUtil {
         }
         return false
     }
-
     fun clog(message: String) {
         synchronized(mod.logs) {
             mod.logs.addLast(LogInfo(message))
@@ -106,13 +96,11 @@ object ChatUtil {
                 mod.logs.removeFirst()
         }
     }
-
     fun log(message: String) {
         val text = "§7[§fMyauClickGui]§7 $message"
         mc.ingameGUI.chatGUI.printChatMessage(ChatComponentText(text))
         clog(text)
     }
-
     fun err(message: String) {
         val text = "§7[§cMyauClickGui · Error]§7 $message"
         mc.ingameGUI.chatGUI.printChatMessage(ChatComponentText(text))

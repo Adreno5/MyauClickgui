@@ -1,5 +1,4 @@
-package adreno.myauclickgui.feature.utils
-
+﻿package adreno.myauclickgui.feature.utils
 import adreno.myauclickgui.feature.types.fonts.Font
 import adreno.myauclickgui.feature.types.other.ARGBColor
 import net.minecraft.client.Minecraft
@@ -17,12 +16,9 @@ import org.lwjgl.opengl.GL30
 import java.awt.image.BufferedImage
 import java.util.*
 import javax.imageio.ImageIO
-
 object RenderUtil {
     private val mc = Minecraft.getMinecraft()
-    // Nested clip rectangles in GUI space as (x1, y1, x2, y2); each push intersects
-    // with the one below so inner clips can never draw outside their parent.
-    private val clipStack: Deque<FloatArray> = ArrayDeque()
+    private val clipStack: Deque<() -> Unit> = ArrayDeque()
     private val textureCache = HashMap<ResourceLocation, Int>()
     private var blurFbo: Framebuffer? = null
     private var blurFbo2: Framebuffer? = null
@@ -30,14 +26,11 @@ object RenderUtil {
     private var blurTexelSizeLoc = -1
     private var blurDirectionLoc = -1
     private var blurSamplerLoc = -1
-
     private val BLUR_SHADER = """
 precision highp float;
-
 uniform sampler2D texture;
 uniform vec2 texelSize;
 uniform vec2 direction;
-
 void main() {
     vec2 uv = gl_TexCoord[0].xy;
     vec4 sum = texture2D(texture, uv) * 0.2270270270;
@@ -53,7 +46,6 @@ void main() {
     gl_FragColor = sum;
 }
 """.trimIndent()
-
     @JvmStatic
     fun drawRect(x: Float, y: Float, w: Float, h: Float, color: Int) {
         setGLState(color)
@@ -65,7 +57,6 @@ void main() {
         GL11.glEnd()
         restoreGLState()
     }
-
     @JvmStatic
     fun drawOutlinedRect(x: Float, y: Float, w: Float, h: Float, thickness: Float, color: Int) {
         drawRect(x, y, w, thickness, color)
@@ -73,12 +64,10 @@ void main() {
         drawRect(x, y + thickness, thickness, h - thickness * 2f, color)
         drawRect(x + w - thickness, y + thickness, thickness, h - thickness * 2f, color)
     }
-
     @JvmStatic
     fun drawRoundedRect(x: Float, y: Float, w: Float, h: Float, radius: Float, color: Int) {
         drawRoundedRect(x, y, w, h, radius, radius, radius, radius, color)
     }
-
     @JvmStatic
     fun drawRoundedRect(x: Float, y: Float, w: Float, h: Float,
                         topLeft: Float, topRight: Float, bottomRight: Float, bottomLeft: Float, color: Int) {
@@ -87,7 +76,6 @@ void main() {
         val tr = Math.min(topRight, maxR)
         val br = Math.min(bottomRight, maxR)
         val bl = Math.min(bottomLeft, maxR)
-
         setGLState(color)
         GL11.glBegin(GL11.GL_TRIANGLE_FAN)
         GL11.glVertex2f(x + w / 2f, y + h / 2f)
@@ -118,11 +106,9 @@ void main() {
         GL11.glEnd()
         restoreGLState()
     }
-
     @JvmStatic
     fun drawOutlinedRoundedRect(x: Float, y: Float, w: Float, h: Float, radius: Float, thickness: Float, color: Int) {
         val r = Math.min(radius, Math.min(w, h) / 2f)
-
         setGLState(color)
         GL11.glLineWidth(thickness)
         GL11.glBegin(GL11.GL_LINE_LOOP)
@@ -135,7 +121,6 @@ void main() {
         GL11.glLineWidth(1f)
         restoreGLState()
     }
-
     @JvmStatic
     fun drawLine(x1: Float, y1: Float, x2: Float, y2: Float, thickness: Float, color: Int) {
         setGLState(color)
@@ -147,22 +132,18 @@ void main() {
         GL11.glLineWidth(1f)
         restoreGLState()
     }
-
     @JvmStatic
     fun drawHorizontalLine(x: Float, y: Float, w: Float, thickness: Float, color: Int) {
         drawRect(x, y, w, thickness, color)
     }
-
     @JvmStatic
     fun drawVerticalLine(x: Float, y: Float, h: Float, thickness: Float, color: Int) {
         drawRect(x, y, thickness, h, color)
     }
-
     @JvmStatic
     fun drawCircle(cx: Float, cy: Float, radius: Float, color: Int) {
         drawEllipse(cx, cy, radius, radius, color)
     }
-
     @JvmStatic
     fun drawEllipse(cx: Float, cy: Float, radiusX: Float, radiusY: Float, color: Int) {
         setGLState(color)
@@ -176,7 +157,6 @@ void main() {
         GL11.glEnd()
         restoreGLState()
     }
-
     @JvmStatic
     fun drawTriangle(x: Float, y: Float, w: Float, h: Float, color: Int) {
         setGLState(color)
@@ -187,12 +167,10 @@ void main() {
         GL11.glEnd()
         restoreGLState()
     }
-
     @JvmStatic
     fun drawDot(x: Float, y: Float, size: Float, color: Int) {
         drawRect(x, y, size, size, color)
     }
-
     @JvmStatic
     fun drawVerticalGradientRect(x: Float, y: Float, w: Float, h: Float, topColor: Int, bottomColor: Int) {
         gradientState()
@@ -208,7 +186,6 @@ void main() {
         GL11.glEnd()
         restoreGLState()
     }
-
     @JvmStatic
     fun drawHorizontalGradientRect(x: Float, y: Float, w: Float, h: Float, leftColor: Int, rightColor: Int) {
         gradientState()
@@ -224,27 +201,22 @@ void main() {
         GL11.glEnd()
         restoreGLState()
     }
-
     @JvmStatic
     fun drawText(text: String, x: Float, y: Float, color: Int): Int {
         return mc.fontRendererObj.drawString(text, x, y, color, false)
     }
-
     @JvmStatic
     fun drawTextWithShadow(text: String, x: Float, y: Float, color: Int): Int {
         return mc.fontRendererObj.drawString(text, x, y, color, true)
     }
-
     @JvmStatic
     fun drawCenteredText(text: String, x: Float, y: Float, color: Int): Int {
         return drawText(text, x - getStringWidth(text) / 2f, y, color)
     }
-
     @JvmStatic
     fun drawCenteredTextWithShadow(text: String, x: Float, y: Float, color: Int): Int {
         return drawTextWithShadow(text, x - getStringWidth(text) / 2f, y, color)
     }
-
     @JvmStatic
     fun drawText(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
         setGlyphState(color)
@@ -254,34 +226,28 @@ void main() {
         restoreGLState()
         return Math.round(dx)
     }
-
     @JvmStatic
     fun drawTextWithShadow(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
         drawText(text, x + 1f, y + 1f, font, size, 0xAA000000.toInt())
         return drawText(text, x, y, font, size, color)
     }
-
     @JvmStatic
     fun drawTextVCenter(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
         return drawText(text, x, centeredTextBaseline(y, font, size), font, size, color)
     }
-
     @JvmStatic
     fun drawTextCenter(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
         val w = getTextWidth(text, font, size)
         return drawText(text, x - w / 2f, centeredTextBaseline(y, font, size), font, size, color)
     }
-
     @JvmStatic
     fun drawCenteredText(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
         return drawText(text, x - getStringWidth(text, font, size) / 2f, y, font, size, color)
     }
-
     @JvmStatic
     fun drawCenteredTextWithShadow(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
         return drawTextWithShadow(text, x - getStringWidth(text, font, size) / 2f, y, font, size, color)
     }
-
     @JvmStatic
     fun drawTextWithFormatting(text: String, x: Float, y: Float, font: Font, size: Float, color: Int): Int {
         var dx = x
@@ -308,42 +274,32 @@ void main() {
         }
         return Math.round(dx)
     }
-
     @JvmStatic
     fun getStringWidth(text: String, font: Font, size: Float): Float = font.getStringWidth(text, size * getScale())
-
     @JvmStatic
     fun getFontHeight(font: Font, size: Float): Int = font.getHeight(size * getScale())
-
     @JvmStatic
     fun getTextWidth(text: String, font: Font, size: Float): Float = font.getStringWidth(text, size * getScale())
-
     @JvmStatic
     fun getTextHeight(text: String, font: Font, size: Float): Int = font.getStringHeight(text, size * getScale())
-
     @JvmStatic
     fun getTextHeight(font: Font, size: Float): Int = font.getHeight(size * getScale())
-
     @JvmStatic
     fun getStringWidth(text: String): Int {
         return mc.fontRendererObj.getStringWidth(text)
     }
-
     @JvmStatic
     fun getFontHeight(): Int {
         return mc.fontRendererObj.FONT_HEIGHT
     }
-
     @JvmStatic
     fun drawTexture(texture: ResourceLocation, x: Float, y: Float, w: Float, h: Float) {
         drawTexture(texture, x, y, w, h, 0f, 0f, 1f, 1f, 0xFFFFFFFF.toInt())
     }
-
     @JvmStatic
     fun drawTexture(texture: ResourceLocation, x: Float, y: Float, w: Float, h: Float, color: Int) {
         drawTexture(texture, x, y, w, h, 0f, 0f, 1f, 1f, color)
     }
-
     @JvmStatic
     fun drawTexture(texture: ResourceLocation, x: Float, y: Float, w: Float, h: Float,
                     u: Float, v: Float, u2: Float, v2: Float, color: Int) {
@@ -367,7 +323,6 @@ void main() {
         GL11.glEnd()
         restoreGLState()
     }
-
     private fun getTexture(texture: ResourceLocation): Int {
         val cached = textureCache[texture]
         if (cached != null) return cached
@@ -396,83 +351,100 @@ void main() {
             return -1
         }
     }
-
-    /**
-     * Clips [render] to the rectangle [x], [y], [w], [h] using the scissor test.
-     *
-     * This deliberately does not use the stencil buffer. Minecraft's main framebuffer
-     * has no stencil attachment, and adding one via Framebuffer.enableStencil() calls
-     * createBindFramebuffer(), which deletes the framebuffer's colour texture and
-     * generates a new id. Anything caching the old id — OptiFine's shader and
-     * first-person hand passes most visibly — then samples a deleted texture, which is
-     * what made the held item disappear after the GUI had been opened once.
-     *
-     * Nested calls intersect, so an inner clip never escapes its parent.
-     */
     @JvmStatic
-    fun withClipping(x: Float, y: Float, w: Float, h: Float, render: () -> Unit) {
-        pushClip(x, y, w, h)
+    fun withClipping(clipShape: () -> Unit, render: () -> Unit) {
+        pushClip(clipShape)
         try {
             render()
         } finally {
             popClip()
         }
     }
-
     @JvmStatic
-    fun withClipping(x: Float, y: Float, w: Float, h: Float, render: Runnable) {
-        withClipping(x, y, w, h, { render.run() })
+    fun pushClip(clipShape: () -> Unit) {
+        clipStack.push(clipShape)
+        if (!stencilAvailable()) return
+        val level = clipStack.size
+        applyStencilClip(clipShape, level)
     }
-
-    @JvmStatic
-    fun pushClip(x: Float, y: Float, w: Float, h: Float) {
-        var x1 = Math.min(x, x + w)
-        var y1 = Math.min(y, y + h)
-        var x2 = Math.max(x, x + w)
-        var y2 = Math.max(y, y + h)
-
-        // Intersect with the enclosing clip so children stay inside their parent.
-        clipStack.peek()?.let { parent ->
-            x1 = Math.max(x1, parent[0])
-            y1 = Math.max(y1, parent[1])
-            x2 = Math.min(x2, parent[2])
-            y2 = Math.min(y2, parent[3])
-        }
-        if (x2 < x1) x2 = x1
-        if (y2 < y1) y2 = y1
-
-        clipStack.push(floatArrayOf(x1, y1, x2, y2))
-        applyClip(x1, y1, x2, y2)
-    }
-
     @JvmStatic
     fun popClip() {
         if (clipStack.isEmpty()) return
-        clipStack.pop()
+        val shape = clipStack.pop()
+        if (!stencilAvailable()) return
+        GL11.glEnable(GL11.GL_STENCIL_TEST)
+        GL11.glStencilMask(0xFF)
+        GL11.glStencilFunc(GL11.GL_ALWAYS, 0, 0xFF)
+        GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_DECR)
+        GlStateManager.colorMask(false, false, false, false)
+        GlStateManager.disableBlend()
+        GlStateManager.disableDepth()
+        GL11.glColor4f(1f, 1f, 1f, 1f)
+        shape()
+        GlStateManager.enableBlend()
+        GlStateManager.colorMask(true, true, true, true)
         val parent = clipStack.peek()
         if (parent == null) {
-            GL11.glDisable(GL11.GL_SCISSOR_TEST)
+            GL11.glDisable(GL11.GL_STENCIL_TEST)
         } else {
-            applyClip(parent[0], parent[1], parent[2], parent[3])
+            setStencilTest(clipStack.size)
         }
     }
-
-    /** Clears any clip left behind by an aborted render. */
     @JvmStatic
     fun resetClipState() {
         clipStack.clear()
-        GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        GL11.glDisable(GL11.GL_STENCIL_TEST)
     }
-
-    private fun applyClip(x1: Float, y1: Float, x2: Float, y2: Float) {
-        val scale = getScale()
-        // glScissor is in framebuffer pixels measured from the bottom-left corner.
-        val px = Math.round(x1 * scale)
-        val py = Math.round(mc.displayHeight - y2 * scale)
-        val pw = Math.max(0, Math.round((x2 - x1) * scale))
-        val ph = Math.max(0, Math.round((y2 - y1) * scale))
-        GL11.glEnable(GL11.GL_SCISSOR_TEST)
-        GL11.glScissor(px, py, pw, ph)
+    @JvmStatic
+    fun reapplyClip() {
+        if (!stencilAvailable() || clipStack.isEmpty()) {
+            GL11.glDisable(GL11.GL_STENCIL_TEST)
+        } else {
+            setStencilTest(clipStack.size)
+        }
+    }
+    private fun applyStencilClip(clipShape: () -> Unit, level: Int) {
+        GL11.glEnable(GL11.GL_STENCIL_TEST)
+        GL11.glStencilMask(0xFF)
+        GL11.glStencilFunc(GL11.GL_ALWAYS, 0, 0xFF)
+        GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_INCR)
+        GlStateManager.colorMask(false, false, false, false)
+        GlStateManager.disableBlend()
+        GlStateManager.disableDepth()
+        GL11.glColor4f(1f, 1f, 1f, 1f)
+        clipShape()
+        GlStateManager.enableBlend()
+        GlStateManager.colorMask(true, true, true, true)
+        setStencilTest(level)
+    }
+    private fun setStencilTest(level: Int) {
+        GL11.glEnable(GL11.GL_STENCIL_TEST)
+        GL11.glStencilFunc(GL11.GL_EQUAL, level, 0xFF)
+        GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
+        GL11.glStencilMask(0x00)
+    }
+    @JvmStatic
+    fun ensureStencil() {
+        val fb = mc.framebuffer ?: return
+        try {
+            if (fb.isStencilEnabled) return
+            fb.enableStencil()
+        } catch (e: Throwable) {
+        }
+    }
+    @JvmStatic
+    fun stencilAvailable(): Boolean {
+        return try {
+            mc.framebuffer?.isStencilEnabled ?: false
+        } catch (e: Throwable) {
+            false
+        }
+    }
+    @JvmStatic
+    fun clearStencil() {
+        GL11.glStencilMask(0xFF)
+        GL11.glClearStencil(0)
+        GL11.glClear(GL11.GL_STENCIL_BUFFER_BIT)
     }
     @JvmStatic
     fun renderBlur(clip: () -> Unit, radius: Int) {
@@ -482,35 +454,28 @@ void main() {
         val height = main.framebufferHeight
         if (width <= 0 || height <= 0) return
         if (!ensureBlurFbos(width, height) || !ensureBlurShader()) return
-
         val sr = ScaledResolution(mc)
         val screenW = sr.scaledWidth.toFloat()
         val screenH = sr.scaledHeight.toFloat()
         val fbo1 = blurFbo!!
         val fbo2 = blurFbo2!!
-
         val blend = GL11.glIsEnabled(GL11.GL_BLEND)
         val depth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST)
         val texture = GL11.glIsEnabled(GL11.GL_TEXTURE_2D)
         val lighting = GL11.glIsEnabled(GL11.GL_LIGHTING)
-        val scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
         val cull = GL11.glIsEnabled(GL11.GL_CULL_FACE)
-
-        GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        val stencilWasEnabled = GL11.glIsEnabled(GL11.GL_STENCIL_TEST)
         GlStateManager.disableCull()
-
         GlStateManager.matrixMode(GL11.GL_PROJECTION)
         GlStateManager.pushMatrix()
         GlStateManager.matrixMode(GL11.GL_MODELVIEW)
         GlStateManager.pushMatrix()
-
         GlStateManager.matrixMode(GL11.GL_PROJECTION)
         GlStateManager.loadIdentity()
         GlStateManager.ortho(0.0, width.toDouble(), height.toDouble(), 0.0, 1000.0, 3000.0)
         GlStateManager.matrixMode(GL11.GL_MODELVIEW)
         GlStateManager.loadIdentity()
         GlStateManager.translate(0f, 0f, -2000f)
-
         GlStateManager.enableTexture2D()
         GlStateManager.disableBlend()
         GlStateManager.disableDepth()
@@ -519,11 +484,10 @@ void main() {
         GlStateManager.color(1f, 1f, 1f, 1f)
         GL13.glActiveTexture(GL13.GL_TEXTURE0)
         GlStateManager.viewport(0, 0, width, height)
-
+        GL11.glDisable(GL11.GL_STENCIL_TEST)
         ARBShaderObjects.glUseProgramObjectARB(blurProgram)
         ARBShaderObjects.glUniform1iARB(blurSamplerLoc, 0)
         ARBShaderObjects.glUniform2fARB(blurTexelSizeLoc, 1f / width, 1f / height)
-
         val iterations = Math.max(1, radius / 3)
         var src = main.framebufferTexture
         for (i in 0 until iterations) {
@@ -531,44 +495,43 @@ void main() {
             ARBShaderObjects.glUniform2fARB(blurDirectionLoc, 1f, 0f)
             GlStateManager.bindTexture(src)
             drawFullscreenQuad(width.toFloat(), height.toFloat())
-
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo2.framebufferObject)
             ARBShaderObjects.glUniform2fARB(blurDirectionLoc, 0f, 1f)
             GlStateManager.bindTexture(fbo1.framebufferTexture)
             drawFullscreenQuad(width.toFloat(), height.toFloat())
-
             src = fbo2.framebufferTexture
         }
-
         GlStateManager.matrixMode(GL11.GL_PROJECTION)
         GlStateManager.popMatrix()
         GlStateManager.matrixMode(GL11.GL_MODELVIEW)
         GlStateManager.popMatrix()
-
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, main.framebufferObject)
         GlStateManager.viewport(0, 0, main.framebufferWidth, main.framebufferHeight)
         ARBShaderObjects.glUseProgramObjectARB(0)
         GlStateManager.enableBlend()
         GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
         GlStateManager.color(1f, 1f, 1f, 1f)
-
-        // Mask the blur to the clip shape through the destination alpha channel rather
-        // than the stencil buffer, which the main framebuffer does not have (and which
-        // cannot be added without recreating it and its colour texture).
-        // 1. Punch the clip shape into alpha only, leaving RGB untouched.
-        GlStateManager.disableTexture2D()
-        GlStateManager.colorMask(false, false, false, true)
+        val useStencil = stencilAvailable()
+        val blurLevel = clipStack.size + 1
+        if (useStencil) {
+            GL11.glEnable(GL11.GL_STENCIL_TEST)
+            GL11.glStencilMask(0xFF)
+            GL11.glStencilFunc(GL11.GL_ALWAYS, 0, 0xFF)
+            GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_INCR)
+            GlStateManager.colorMask(false, false, false, false)
+            GlStateManager.disableBlend()
+            GlStateManager.disableDepth()
+            GL11.glColor4f(1f, 1f, 1f, 1f)
+            clip()
+            GlStateManager.enableBlend()
+            GlStateManager.colorMask(true, true, true, true)
+            GL11.glStencilFunc(GL11.GL_EQUAL, blurLevel, 0xFF)
+            GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
+            GL11.glStencilMask(0x00)
+        }
+        GlStateManager.enableTexture2D()
         GlStateManager.enableBlend()
         GlStateManager.tryBlendFuncSeparate(GL11.GL_ONE, GL11.GL_ZERO, GL11.GL_ONE, GL11.GL_ZERO)
-        GlStateManager.color(0f, 0f, 0f, 0f)
-        drawFullscreenQuad(screenW, screenH)
-        GlStateManager.color(1f, 1f, 1f, 1f)
-        clip()
-
-        // 2. Draw the blur where that alpha is set.
-        GlStateManager.colorMask(true, true, true, false)
-        GlStateManager.enableTexture2D()
-        GlStateManager.tryBlendFuncSeparate(GL11.GL_DST_ALPHA, GL11.GL_ONE_MINUS_DST_ALPHA, GL11.GL_ZERO, GL11.GL_ONE)
         GlStateManager.pushMatrix()
         GlStateManager.loadIdentity()
         GlStateManager.translate(0f, 0f, -2000f)
@@ -576,33 +539,24 @@ void main() {
         GlStateManager.bindTexture(fbo2.framebufferTexture)
         drawFullscreenQuad(screenW, screenH)
         GlStateManager.popMatrix()
-
-        // 3. Restore alpha to opaque so later passes are unaffected.
-        GlStateManager.disableTexture2D()
-        GlStateManager.colorMask(false, false, false, true)
-        GlStateManager.tryBlendFuncSeparate(GL11.GL_ONE, GL11.GL_ZERO, GL11.GL_ONE, GL11.GL_ZERO)
-        GlStateManager.color(0f, 0f, 0f, 1f)
-        drawFullscreenQuad(screenW, screenH)
-        GlStateManager.colorMask(true, true, true, true)
-        GlStateManager.color(1f, 1f, 1f, 1f)
+        if (useStencil) {
+            GL11.glStencilMask(0xFF)
+            GL11.glClearStencil(0)
+            GL11.glClear(GL11.GL_STENCIL_BUFFER_BIT)
+            GL11.glDisable(GL11.GL_STENCIL_TEST)
+        }
         GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
-
+        GlStateManager.color(1f, 1f, 1f, 1f)
         if (blend) GlStateManager.enableBlend() else GlStateManager.disableBlend()
         if (depth) GlStateManager.enableDepth() else GlStateManager.disableDepth()
         if (texture) GlStateManager.enableTexture2D() else GlStateManager.disableTexture2D()
         if (lighting) GlStateManager.enableLighting() else GlStateManager.disableLighting()
         if (cull) GlStateManager.enableCull()
-        // Re-apply the active clip rectangle, not just the enable bit, since this
-        // function reset the scissor box while compositing.
-        val activeClip = clipStack.peek()
-        if (activeClip != null) {
-            applyClip(activeClip[0], activeClip[1], activeClip[2], activeClip[3])
-        } else if (scissor) {
-            GL11.glEnable(GL11.GL_SCISSOR_TEST)
+        reapplyClip()
+        if (!stencilWasEnabled && clipStack.isEmpty()) {
+            GL11.glDisable(GL11.GL_STENCIL_TEST)
         }
-        GlStateManager.color(1f, 1f, 1f, 1f)
     }
-
     private fun ensureBlurFbos(width: Int, height: Int): Boolean {
         if (blurFbo != null && blurFbo!!.framebufferWidth == width && blurFbo!!.framebufferHeight == height) return true
         blurFbo?.deleteFramebuffer()
@@ -617,13 +571,11 @@ void main() {
             return false
         }
     }
-
     private fun setLinearFilter(fbo: Framebuffer) {
         GlStateManager.bindTexture(fbo.framebufferTexture)
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR)
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR)
     }
-
     private fun ensureBlurShader(): Boolean {
         if (blurProgram != -1) return true
         val fragment = ARBShaderObjects.glCreateShaderObjectARB(GL20.GL_FRAGMENT_SHADER)
@@ -650,7 +602,6 @@ void main() {
         blurSamplerLoc = ARBShaderObjects.glGetUniformLocationARB(blurProgram, "texture")
         return true
     }
-
     private fun drawFullscreenQuad(width: Float, height: Float) {
         GL11.glBegin(GL11.GL_QUADS)
         GL11.glTexCoord2f(0f, 1f)
@@ -663,17 +614,14 @@ void main() {
         GL11.glVertex2f(0f, height)
         GL11.glEnd()
     }
-
     @JvmStatic
     fun isInside(x: Float, y: Float, w: Float, h: Float, mx: Float, my: Float): Boolean {
         return mx >= x && mx <= x + w && my >= y && my <= y + h
     }
-
     @JvmStatic
     fun isInside(x: Float, y: Float, w: Float, h: Float, radius: Float, mx: Float, my: Float): Boolean {
         return isInside(x, y, w, h, radius, radius, radius, radius, mx, my)
     }
-
     @JvmStatic
     fun isInside(x: Float, y: Float, w: Float, h: Float,
                  topLeft: Float, topRight: Float, bottomRight: Float, bottomLeft: Float,
@@ -689,33 +637,27 @@ void main() {
         }
         return true
     }
-
     private fun inCircle(cx: Float, cy: Float, r: Float, mx: Float, my: Float): Boolean {
         val dx = mx - cx
         val dy = my - cy
         return dx * dx + dy * dy <= r * r
     }
-
     @JvmStatic
     fun getScale(): Float {
         return ScaledResolution(mc).scaleFactor.toFloat()
     }
-
     @JvmStatic
     fun setColor(color: Int) {
         glColor(color)
     }
-
     @JvmStatic
     fun alpha(color: Int, alpha: Float): Int {
         return (color and 0x00FFFFFF) or ((alpha * 255f + 0.5f).toInt() and 0xFF shl 24)
     }
-
     @JvmStatic
     fun getRGB(r: Int, g: Int, b: Int, a: Int): Int {
         return (a and 0xFF shl 24) or (r and 0xFF shl 16) or (g and 0xFF shl 8) or (b and 0xFF)
     }
-
     @JvmStatic
     fun getRGB(r: Float, g: Float, b: Float, a: Float): Int {
         return getRGB(
@@ -724,7 +666,6 @@ void main() {
                 (b * 255f + 0.5f).toInt(),
                 (a * 255f + 0.5f).toInt())
     }
-
     @JvmStatic
     fun parseARGB(color: Int): ARGBColor {
         return ARGBColor(
@@ -733,42 +674,32 @@ void main() {
                 b = color and 0xFF,
                 a = color shr 24 and 0xFF)
     }
-
     @JvmStatic
     fun pushMatrix() {
         GlStateManager.pushMatrix()
     }
-
     @JvmStatic
     fun popMatrix() {
         GlStateManager.popMatrix()
     }
-
     @JvmStatic
     fun translate(x: Float, y: Float) {
         GlStateManager.translate(x, y, 0f)
     }
-
     @JvmStatic
     fun scale(x: Float, y: Float) {
         GlStateManager.scale(x, y, 1f)
     }
-
-
-
     private fun drawArc(cx: Float, cy: Float, radius: Float, startAngle: Float, endAngle: Float, segments: Int) {
         for (i in 0..segments) {
             val angle = Math.toRadians((startAngle + (endAngle - startAngle) * i / segments).toDouble())
             GL11.glVertex2f((cx + Math.cos(angle) * radius).toFloat(), (cy + Math.sin(angle) * radius).toFloat())
         }
     }
-
     private fun scaledSize(size: Float): Float = size * getScale()
-
     private fun centeredTextBaseline(y: Float, font: Font, size: Float): Float {
         return y + font.getCenterBaselineOffset(scaledSize(size))
     }
-
     private fun setGLState(color: Int) {
         GlStateManager.enableBlend()
         GlStateManager.disableTexture2D()
@@ -777,7 +708,6 @@ void main() {
         GlStateManager.disableDepth()
         glColor(color)
     }
-
     private fun setGlyphState(color: Int) {
         GlStateManager.enableBlend()
         GlStateManager.enableTexture2D()
@@ -786,7 +716,6 @@ void main() {
         GlStateManager.disableCull()
         glColor(color)
     }
-
     private fun drawGlyph(font: Font, c: Char, size: Float, x: Float, y: Float): Float {
         val glyph = font.getGlyph(c, size)
         GlStateManager.bindTexture(glyph.textureId)
@@ -803,7 +732,6 @@ void main() {
         GL11.glEnd()
         return glyph.advance
     }
-
     private fun formatCode(code: Char, fallback: Int): Int {
         val baseRgb: Int = when (code) {
             '0' -> 0x000000
@@ -825,8 +753,6 @@ void main() {
             'r', 'R' -> return fallback
             else     -> return fallback
         }
-        // tint: multiply each channel of the format colour by the corresponding
-        // channel of `fallback` (white = no tint, red = keep only red channel)
         val tr = (fallback shr 16 and 0xFF)
         val tg = (fallback shr 8  and 0xFF)
         val tb = (fallback        and 0xFF)
@@ -836,7 +762,6 @@ void main() {
         val b = (baseRgb        and 0xFF) * tb / 255
         return (ta shl 24) or (r shl 16) or (g shl 8) or b
     }
-
     private fun gradientState() {
         GlStateManager.enableBlend()
         GlStateManager.disableTexture2D()
@@ -845,14 +770,12 @@ void main() {
         GlStateManager.disableDepth()
         GL11.glShadeModel(GL11.GL_SMOOTH)
     }
-
     private fun restoreGLState() {
         GlStateManager.color(1f, 1f, 1f, 1f)
         GlStateManager.enableTexture2D()
         GlStateManager.disableBlend()
         GL11.glShadeModel(GL11.GL_FLAT)
     }
-
     private fun glColor(color: Int) {
         GlStateManager.color(
                 (color shr 16 and 0xFF) / 255f,

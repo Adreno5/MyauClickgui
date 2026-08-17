@@ -1,14 +1,11 @@
 package com.google.common.io;
-
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-
 public final class MoreFiles {
     private MoreFiles() {
     }
-
     public static void deleteRecursively(Path path, RecursiveDeleteOption... options) throws IOException {
         if (!Files.exists(path)) {
             return;

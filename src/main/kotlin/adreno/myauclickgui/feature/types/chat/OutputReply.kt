@@ -1,5 +1,4 @@
-package adreno.myauclickgui.feature.types.chat
-
+﻿package adreno.myauclickgui.feature.types.chat
 class OutputReply(
     val prompt: String,
     formatted: List<String>,

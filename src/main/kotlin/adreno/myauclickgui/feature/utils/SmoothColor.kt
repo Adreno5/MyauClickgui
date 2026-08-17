@@ -1,13 +1,10 @@
-package adreno.myauclickgui.feature.utils
-
+﻿package adreno.myauclickgui.feature.utils
 import java.awt.Color
-
 class SmoothColor(animationTime: Float, powerNumber: Int) {
     private val rt = EaseOut(animationTime, powerNumber)
     private val gr = EaseOut(animationTime, powerNumber)
     private val bt = EaseOut(animationTime, powerNumber)
     private val at = EaseOut(animationTime, powerNumber)
-
     var targetColor: Int
         get() = RenderUtil.getRGB(
             clampColor(rt.targetValue),
@@ -22,9 +19,7 @@ class SmoothColor(animationTime: Float, powerNumber: Int) {
             bt.targetValue = parsed.b.toFloat()
             at.targetValue = parsed.a.toFloat()
         }
-
     private fun clampColor(value: Float): Int = 0.coerceAtLeast(255.coerceAtMost(value.toInt()))
-
     var currentValue: Int
         get() = RenderUtil.getRGB(
             clampColor(rt.currentValue),
@@ -39,7 +34,6 @@ class SmoothColor(animationTime: Float, powerNumber: Int) {
             bt.currentValue = parsed.b.toFloat()
             at.currentValue = parsed.a.toFloat()
         }
-
     fun reset() {
         rt.reset()
         gr.reset()
