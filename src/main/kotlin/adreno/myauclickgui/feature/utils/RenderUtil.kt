@@ -396,6 +396,22 @@ void main() {
         GL11.glDisable(GL11.GL_STENCIL_TEST)
     }
     @JvmStatic
+    fun restoreGLDefaults() {
+        GlStateManager.color(1f, 1f, 1f, 1f)
+        GlStateManager.colorMask(true, true, true, true)
+        GlStateManager.depthMask(true)
+        GlStateManager.enableTexture2D()
+        GlStateManager.enableDepth()
+        GlStateManager.enableCull()
+        GlStateManager.enableBlend()
+        GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0)
+        GL11.glDisable(GL11.GL_STENCIL_TEST)
+        GL11.glStencilMask(0x00)
+        GL11.glShadeModel(GL11.GL_FLAT)
+        GL13.glActiveTexture(GL13.GL_TEXTURE0)
+        GlStateManager.bindTexture(0)
+    }
+    @JvmStatic
     fun reapplyClip() {
         if (!stencilAvailable() || clipStack.isEmpty()) {
             GL11.glDisable(GL11.GL_STENCIL_TEST)

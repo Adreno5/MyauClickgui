@@ -180,6 +180,7 @@ object GuiClickGui : GuiScreen() {
         pendingClick = null
         pendingWheel = null
         pendingRelease = false
+        RenderUtil.restoreGLDefaults()
     }
     fun render(mouseX: Int, mouseY: Int, mouseButton: Int?, wheel: Int?, release: Boolean) {
         val sr = ScaledResolution(mc)
